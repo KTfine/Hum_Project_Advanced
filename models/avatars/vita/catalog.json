@@ -1,0 +1,1354 @@
+{
+  "sprites": [
+    {
+      "file": "fun_open_down_front_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "fun_open_down_front_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "fun_open_down_front_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "fun_open_down_lean_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        614
+      ]
+    },
+    {
+      "file": "fun_open_down_lean_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        500
+      ]
+    },
+    {
+      "file": "fun_open_down_lean_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        437
+      ]
+    },
+    {
+      "file": "fun_open_up_front_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        692
+      ]
+    },
+    {
+      "file": "fun_open_up_front_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        578
+      ]
+    },
+    {
+      "file": "fun_open_up_front_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        514
+      ]
+    },
+    {
+      "file": "fun_open_up_lean_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        700
+      ]
+    },
+    {
+      "file": "fun_open_up_lean_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        587
+      ]
+    },
+    {
+      "file": "fun_open_up_lean_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        523
+      ]
+    },
+    {
+      "file": "fun_open_back_front_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "fun_open_back_front_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "fun_open_back_front_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "fun_open_back_lean_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        614
+      ]
+    },
+    {
+      "file": "fun_open_back_lean_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        500
+      ]
+    },
+    {
+      "file": "fun_open_back_lean_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        437
+      ]
+    },
+    {
+      "file": "fun_peace_down_front_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        619
+      ]
+    },
+    {
+      "file": "fun_peace_down_front_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        505
+      ]
+    },
+    {
+      "file": "fun_peace_down_front_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        441
+      ]
+    },
+    {
+      "file": "fun_peace_down_lean_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        614
+      ]
+    },
+    {
+      "file": "fun_peace_down_lean_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        500
+      ]
+    },
+    {
+      "file": "fun_peace_down_lean_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        437
+      ]
+    },
+    {
+      "file": "fun_peace_up_front_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        691
+      ]
+    },
+    {
+      "file": "fun_peace_up_front_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        577
+      ]
+    },
+    {
+      "file": "fun_peace_up_front_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        513
+      ]
+    },
+    {
+      "file": "fun_peace_up_lean_stand.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        702
+      ]
+    },
+    {
+      "file": "fun_peace_up_lean_sit.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        588
+      ]
+    },
+    {
+      "file": "fun_peace_up_lean_squat.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        524
+      ]
+    },
+    {
+      "file": "grin_open_down_front_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "grin_open_down_front_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "grin_open_down_front_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "grin_open_down_lean_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        614
+      ]
+    },
+    {
+      "file": "grin_open_down_lean_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        500
+      ]
+    },
+    {
+      "file": "grin_open_down_lean_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        437
+      ]
+    },
+    {
+      "file": "grin_open_up_front_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        692
+      ]
+    },
+    {
+      "file": "grin_open_up_front_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        578
+      ]
+    },
+    {
+      "file": "grin_open_up_front_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        514
+      ]
+    },
+    {
+      "file": "grin_open_up_lean_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        700
+      ]
+    },
+    {
+      "file": "grin_open_up_lean_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        587
+      ]
+    },
+    {
+      "file": "grin_open_up_lean_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        523
+      ]
+    },
+    {
+      "file": "grin_open_back_front_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "grin_open_back_front_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "grin_open_back_front_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "grin_open_back_lean_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        614
+      ]
+    },
+    {
+      "file": "grin_open_back_lean_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        500
+      ]
+    },
+    {
+      "file": "grin_open_back_lean_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        437
+      ]
+    },
+    {
+      "file": "grin_peace_down_front_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        619
+      ]
+    },
+    {
+      "file": "grin_peace_down_front_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        505
+      ]
+    },
+    {
+      "file": "grin_peace_down_front_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        441
+      ]
+    },
+    {
+      "file": "grin_peace_down_lean_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        614
+      ]
+    },
+    {
+      "file": "grin_peace_down_lean_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        500
+      ]
+    },
+    {
+      "file": "grin_peace_down_lean_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        437
+      ]
+    },
+    {
+      "file": "grin_peace_up_front_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        691
+      ]
+    },
+    {
+      "file": "grin_peace_up_front_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        577
+      ]
+    },
+    {
+      "file": "grin_peace_up_front_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        513
+      ]
+    },
+    {
+      "file": "grin_peace_up_lean_stand.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        702
+      ]
+    },
+    {
+      "file": "grin_peace_up_lean_sit.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        588
+      ]
+    },
+    {
+      "file": "grin_peace_up_lean_squat.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        524
+      ]
+    },
+    {
+      "file": "cool_open_down_front_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "cool_open_down_front_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "cool_open_down_front_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "cool_open_down_lean_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        614
+      ]
+    },
+    {
+      "file": "cool_open_down_lean_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        500
+      ]
+    },
+    {
+      "file": "cool_open_down_lean_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        118,
+        437
+      ]
+    },
+    {
+      "file": "cool_open_up_front_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        692
+      ]
+    },
+    {
+      "file": "cool_open_up_front_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        578
+      ]
+    },
+    {
+      "file": "cool_open_up_front_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        514
+      ]
+    },
+    {
+      "file": "cool_open_up_lean_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        700
+      ]
+    },
+    {
+      "file": "cool_open_up_lean_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        587
+      ]
+    },
+    {
+      "file": "cool_open_up_lean_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        523
+      ]
+    },
+    {
+      "file": "cool_open_back_front_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        619
+      ]
+    },
+    {
+      "file": "cool_open_back_front_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        505
+      ]
+    },
+    {
+      "file": "cool_open_back_front_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        441
+      ]
+    },
+    {
+      "file": "cool_open_back_lean_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        614
+      ]
+    },
+    {
+      "file": "cool_open_back_lean_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        500
+      ]
+    },
+    {
+      "file": "cool_open_back_lean_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "背在身后",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        437
+      ]
+    },
+    {
+      "file": "cool_peace_down_front_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        619
+      ]
+    },
+    {
+      "file": "cool_peace_down_front_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        505
+      ]
+    },
+    {
+      "file": "cool_peace_down_front_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        133,
+        441
+      ]
+    },
+    {
+      "file": "cool_peace_down_lean_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        614
+      ]
+    },
+    {
+      "file": "cool_peace_down_lean_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        500
+      ]
+    },
+    {
+      "file": "cool_peace_down_lean_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        156,
+        437
+      ]
+    },
+    {
+      "file": "cool_peace_up_front_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        691
+      ]
+    },
+    {
+      "file": "cool_peace_up_front_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        577
+      ]
+    },
+    {
+      "file": "cool_peace_up_front_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        104,
+        513
+      ]
+    },
+    {
+      "file": "cool_peace_up_lean_stand.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        88,
+        702
+      ]
+    },
+    {
+      "file": "cool_peace_up_lean_sit.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "坐着"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        89,
+        588
+      ]
+    },
+    {
+      "file": "cool_peace_up_lean_squat.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "比耶",
+        "arm": "伸直举高过头",
+        "torso": "半身歪斜向右",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 607,
+      "anchor_px": [
+        92,
+        524
+      ]
+    }
+  ]
+}

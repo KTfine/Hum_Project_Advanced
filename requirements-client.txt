@@ -1,0 +1,3 @@
+opencv-python>=4.8,<5
+httpx>=0.27,<1
+cv2-enumerate-cameras==1.4.0; sys_platform == "win32"

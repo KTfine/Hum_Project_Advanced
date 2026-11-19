@@ -1,0 +1,69 @@
+{
+  "sprites": [
+    {
+      "file": "peek-right.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 960,
+      "anchor_px": [590, 1015],
+      "face_box_px": [490, 191, 613, 282]
+    },
+    {
+      "file": "peek-right-grin.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "半身歪斜向右",
+        "legs": "站着"
+      },
+      "standing_height_px": 960,
+      "anchor_px": [590, 1015],
+      "face_box_px": [490, 191, 613, 282]
+    },
+    {
+      "file": "stand-relaxed.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "kneel.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "蹲下"
+      },
+      "standing_height_px": 1447,
+      "anchor_px": [380, 1379],
+      "face_box_px": [405, 566, 562, 679]
+    },
+    {
+      "file": "sit-table-edge.png",
+      "tags": {
+        "face": "高冷表情",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "坐着"
+      },
+      "standing_height_px": 1425,
+      "anchor_px": [456, 1390],
+      "face_box_px": [461, 266, 621, 373]
+    }
+  ]
+}
