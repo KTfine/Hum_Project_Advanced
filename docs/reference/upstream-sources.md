@@ -4,6 +4,8 @@
 
 | 内容 | 来源及固定提交 |
 |---|---|
+| 场景实例分割 | YOLO11s-seg，采用 [unileon-robotics 固定版本 ONNX 导出](https://huggingface.co/unileon-robotics/YOLO11-ONNX/tree/0e2a3f195ae62a25bc038ee9665b8e4ac5b98793)，使用图像和原型掩膜两个输出。 |
+| 场景相对逆深度 | [MiDaS v2.1 官方发布](https://github.com/isl-org/MiDaS/releases/tag/v2_1) 的 model-small.onnx。两份场景权重的长度、哈希与安装入口见 [scene_objects.py](../../photo_assistant/vision/scene_objects.py)。 |
 | 默认立绘 | 随库 PNG 的来源和标签说明见[立绘目录](../../models/avatars/README.md)。 |
 | 初始客户端、协议解析器、提示词及测试 | [AIAA3800 main](https://github.com/DDRP674/AIAA3800/tree/177d70afd6d8e6d95d619621c61117cef8cd59cd)，`177d70afd6d8e6d95d619621c61117cef8cd59cd` |
 | 历史部署配置、脚本和客户端工具 | [AIAA3800 backend](https://github.com/DDRP674/AIAA3800/tree/2accaaff4e616caac397037e41fbcf9324339d63)，`2accaaff4e616caac397037e41fbcf9324339d63` |

@@ -10,7 +10,9 @@
 | `--sprite-catalog` | 指定带五部位标签的 JSON 立绘库。实时客户端默认使用 `models/avatars/white_dragon/catalog.json`。[立绘目录](../../models/avatars/README.md) |
 | `--canvas-width` / `--canvas-height` | 没有可用摄像头帧时的画布尺寸，默认 1280 × 720；有摄像头画面时沿用其分辨率 |
 | `--jpeg-quality` | 发给模型的 JPEG 质量，默认 80，范围 1–100 |
-| `--character-name` / `--character-persona` | 自定义合照角色的名字和设定 |
+| `--character-name` | 自定义角色在对话中的名字 |
+| `--character-persona-file` | 指定 UTF-8 性格文本，默认读取[角色性格.txt](../../角色性格.txt)，指导与合照共用。启动脚本对应参数为 `-PersonaFile`。 |
+| `--character-persona` | 本次启动直接使用指定的性格文字 |
 | `--prompt` | 使用完整自定义提示词，停用内置模板自动切换 |
 | `--log-file` | 指定 JSONL 日志，默认存入项目内的 `experiments/runtime/` |
 | `--verbose` | 在终端额外显示静默观察的 `[blank]` 和 API 元数据 |

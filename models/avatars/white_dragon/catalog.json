@@ -9,9 +9,9 @@
         "torso": "半身歪斜向右",
         "legs": "站着"
       },
-      "standing_height_px": 960,
-      "anchor_px": [590, 1015],
-      "face_box_px": [490, 191, 613, 282]
+      "standing_height_px": 1470,
+      "anchor_px": [466, 1493],
+      "face_box_px": [655, 290, 836, 425]
     },
     {
       "file": "peek-right-grin.png",
@@ -22,9 +22,9 @@
         "torso": "半身歪斜向右",
         "legs": "站着"
       },
-      "standing_height_px": 960,
-      "anchor_px": [590, 1015],
-      "face_box_px": [490, 191, 613, 282]
+      "standing_height_px": 1470,
+      "anchor_px": [466, 1493],
+      "face_box_px": [655, 290, 836, 425]
     },
     {
       "file": "stand-relaxed.png",
@@ -63,6 +63,7 @@
       },
       "standing_height_px": 1425,
       "anchor_px": [456, 1390],
+      "seat_contact_px": [545, 843],
       "face_box_px": [461, 266, 621, 373]
     }
   ]

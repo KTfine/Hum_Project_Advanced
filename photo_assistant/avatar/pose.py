@@ -53,6 +53,7 @@ class SpriteEntry:
     standing_height_px: float
     anchor_px: tuple[float, float]
     face_box_px: tuple[float, float, float, float] | None = None
+    seat_contact_px: tuple[float, float] | None = None
 
 
 def _patterns(rows: Sequence[tuple[str, ...]], fields: tuple[str, ...]) -> list[tuple[str, ...]]:
@@ -102,11 +103,12 @@ class PoseCatalog:
 
     def describe(self) -> str:
         fields = tuple(SPRITE_OPTIONS)
-        lines = [f"{k} 可选 {'、'.join(v)}" for k, v in SPRITE_OPTIONS.items()]
-        lines.append(f"本库有 {len(self.entries)} 个可用组合。")
+        lines = [f"本库有 {len(self.entries)} 个可用组合。"]
         if len(self.entries) <= 12:
+            lines.append("每一行对应一张实际图片。要换图时整行复制，保留这张图的全部五项。")
             lines.extend(pose.command() for pose in self.entries)
         else:
+            lines.extend(f"{k} 可选 {'、'.join(v)}" for k, v in SPRITE_OPTIONS.items())
             lines.append("可用组合按 " + " | ".join(fields) + " 排列。* 表示该字段任一枚举值，/ 表示任选其一；输出时每项必须填一个具体值。")
             rows = [tuple(asdict(pose).values()) for pose in self.entries]
             lines.extend(" | ".join(p) for p in _patterns(rows, fields))
@@ -145,7 +147,13 @@ def _entry(row: dict, directory: Path) -> SpriteEntry:
                 or not 0 <= face_box[1] < face_box[3] <= height):
             raise ValueError(f"face_box_px 须为图内的 [左, 上, 右, 下]：{filename}")
         face_box = tuple(face_box)
-    return SpriteEntry(path, float(size), (float(anchor[0]), float(anchor[1])), face_box)
+    contact = row.get("seat_contact_px")
+    if contact is not None:
+        if (not isinstance(contact, list) or len(contact) != 2 or not all(_number(v) for v in contact)
+                or not 0 <= contact[0] <= width or not 0 <= contact[1] <= height):
+            raise ValueError(f"seat_contact_px 须为图内的 [x, y]：{filename}")
+        contact = tuple(contact)
+    return SpriteEntry(path, float(size), (float(anchor[0]), float(anchor[1])), face_box, contact)
 
 
 def load_pose_catalog(path: Path) -> PoseCatalog:

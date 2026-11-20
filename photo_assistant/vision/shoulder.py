@@ -26,7 +26,7 @@ PORTRAIT_FACE_DROP = 0.84
 
 
 def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height, reference,
-                  face_box, head, preferred_x):
+                  face_box, head, preferred_x, scene):
     """Place both soles on the same ground plane and choose the nearest clear horizontal slot."""
     height, width = person_mask.shape
     step = max(1, (max(height, width) + 255) // 256)
@@ -85,10 +85,34 @@ def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height
     shoes_top = int((reference.foot_y - 0.08 * reference.height) * height / step)
     head_and_shoes[max(0, head_bottom):max(0, shoes_top)] = 0
     clear &= cv2.matchTemplate(head_and_shoes, silhouette, cv2.TM_CCORR)[0] < 0.5
+    furniture_masks = {id(obj.mask) for obj in scene.objects} if scene is not None else set()
+    furniture = np.zeros_like(person)
     for mask in foreground_masks:
-        if mask is not person_mask:
-            obstacle = (mask[::step, ::step] >= 0.5).astype(np.uint8)
+        if mask is person_mask:
+            continue
+        obstacle = (mask[::step, ::step] >= 0.5).astype(np.uint8)
+        if id(mask) in furniture_masks:
+            furniture |= obstacle
+        else:
             clear &= cv2.matchTemplate(obstacle, silhouette, cv2.TM_CCORR)[0] < 0.5
+    covered = np.zeros_like(overlap)
+    if furniture.any():
+        # GroundProjection assumes an unrolled camera. All candidates at this y
+        # share the same floor depth, including a slot in front of the table.
+        if scene.ground is not None:
+            furniture &= scene.furniture_cover(.5, y)[::step, ::step] >= .5
+        covered = cv2.matchTemplate(furniture, silhouette, cv2.TM_CCORR)[0] / silhouette.sum()
+        clear &= covered < .18
+        row = np.arange(rows)[:, None]
+        if face_box is not None:
+            fx0, fy0, fx1, fy1 = face_box
+            face_ink = silhouette * ((columns >= (fx0 - left * sample) * zoom)
+                                     & (columns <= (fx1 - left * sample) * zoom)
+                                     & (row >= foot + (fy0 - anchor[1]) * zoom)
+                                     & (row <= foot + (fy1 - anchor[1]) * zoom))
+            clear &= cv2.matchTemplate(furniture, face_ink, cv2.TM_CCORR)[0] <= .04 * face_ink.sum() + .1
+        shoes = core * (row >= foot - .05 * size / step)
+        clear &= cv2.matchTemplate(furniture, shoes, cv2.TM_CCORR)[0] <= .08 * shoes.sum() + .1
     slots = np.flatnonzero(clear)
     if not slots.size:
         return None
@@ -108,6 +132,7 @@ def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height
     feasible = distance <= 0.65 * reference.height * height / step
     if not feasible.any():
         return None
+    distance = distance + covered[slots] * reference.height * height / step
     if preferred_x is not None:
         side = preferred_x * width / step - person_x
         if abs(side) > 0.025 * cols:
@@ -174,7 +199,7 @@ def _at_positions(region, anchors, foot, size, cover, target):
 
 
 def _fit(art, target, cover, size, foot, flank_top, cropped=False, portrait=False, *,
-         preferred_x=None, subject_x=None):
+         preferred_x=None, subject_x=None, prefer_clear_face=False):
     face, torso, body, head = art
     w = cover.shape[1]
     # Search by projected face center, allowing a leaning sprite's foot off camera.
@@ -223,6 +248,8 @@ def _fit(art, target, cover, size, foot, flank_top, cropped=False, portrait=Fals
         return None
     score = (1 - abs(shown - 0.5) - 0.60 * abs(body_shown - 0.5)
              + 0.15 * split_rows + 0.15 * face_visibility + 0.5 * head_fit)
+    if prefer_clear_face:
+        score -= .5 * (face_visibility < .98)
     if preferred_x is not None:
         # Rank only physically feasible poses. A request to stay on one side
         # follows that flank, even if the person's silhouette changes shape.
@@ -282,6 +309,7 @@ def side_placement(
     head: FaceReference | None = None,
     preferred_x: float | None = None,
     subject_reference: PersonReference | None = None, allow_pair: bool = True,
+    scene=None,
 ) -> SidePlacement | None:
     """Use adjacent floor space for full-body photos, and side occlusion for portraits."""
     if person_mask is not None and person_mask.ndim == 2 and person_mask.size:
@@ -292,7 +320,7 @@ def side_placement(
             subject_reference = person_reference(person_mask, subject_x, subject_y)
         if allow_pair and subject_reference is not None and not subject_reference.estimated:
             return _stand_beside(person_mask, foreground_masks, sprite_bgra, anchor_px, standing_height_px,
-                                 subject_reference, face_box_px, head, preferred_x)
+                                 subject_reference, face_box_px, head, preferred_x, scene)
     if not foreground_masks:
         return None
     shape = foreground_masks[0].shape
@@ -358,6 +386,14 @@ def side_placement(
             else:
                 size = portrait_height if portrait else matched_height
                 options = _peek_compositions(reference, frame_height, head, size / step, face_y_offset, step)
+                if portrait and reference is not None and scene is not None:
+                    # When the subject's shoes are far out of frame, a face-matched
+                    # sprite can inadvertently show both feet halfway up a wall.
+                    # Keep the calibrated body size and crop the shoe band instead.
+                    shoe_band = .10 * size / step
+                    if reference.foot_y * frame_height >= frame_height + shoe_band:
+                        options = dict.fromkeys((size_at_y, max(foot, frame_height + shoe_band))
+                                                for size_at_y, foot in options)
             desired_x = None if preferred_x is None else preferred_x * shape[1] / step
             subject_x = head.center_x / step if matched_height is not None else left + width / 2
             for order, (size, foot) in enumerate(options):
@@ -365,7 +401,8 @@ def side_placement(
                 if reference is not None and reference.estimated and reference.foot_y > 1.25 and not cropped:
                     continue
                 result = _fit(art, target, cover, size, foot, flank_top, cropped, portrait,
-                              preferred_x=desired_x, subject_x=subject_x)
+                              preferred_x=desired_x, subject_x=subject_x,
+                              prefer_clear_face=portrait and scene is not None)
                 if result is None:
                     continue
                 score, ax = result

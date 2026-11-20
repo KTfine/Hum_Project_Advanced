@@ -137,7 +137,7 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
             frame = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
             np.testing.assert_array_equal(frame, expected)
 
-    async def test_mode_tag_alone_places_real_sprite_at_shoulder_before_first_capture(self):
+    async def test_mode_tag_alone_places_real_sprite_beside_full_body_before_first_capture(self):
         frame = self.camera.latest_frame()
         mask = np.zeros(frame.shape[:2], np.float32)
         cv2.circle(mask, (47, 17), 7, 1, -1)
@@ -153,12 +153,21 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
               patch.object(client, 'PROJECT_ROOT', Path(self.folder.name))):
             await self.run_sessions(AsyncMock(side_effect=sessions))
         state = canvas.controller.state_at()
-        self.assertEqual(sessions[1].placements[0], {"x": state.x, "y": state.y, "scale": state.scale})
-        self.assertEqual(state.pose.torso, "半身歪斜向右")
-        self.assertLess(state.x, 0.4)
+        placement = sessions[1].placements[0]
+        self.assertEqual((placement["x"], placement["y"], placement["scale"]), (state.x, state.y, state.scale))
+        self.assertEqual((placement["person_framing"], placement["placement_source"]), ("全身", "并排站位"))
+        self.assertEqual(state.pose, canvas.avatar_frames.catalog.standing_pose)
+        self.assertEqual(placement["current_tachie"], state.pose.command())
+        person_y, person_x = np.nonzero(mask)
+        foot_x, foot_y = state.x * frame.shape[1], state.y * frame.shape[0]
+        self.assertFalse(person_x.min() <= foot_x <= person_x.max())
+        self.assertLess(abs(foot_y - person_y.max()), 4)
         path, = (Path(self.folder.name) / 'photos').glob('*.png')
         photo = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR)
-        self.assertTrue(photo[14:42, 54:85].any())
+        visible_y, visible_x = np.nonzero(np.any(photo != frame, axis=2))
+        self.assertGreater(len(visible_x), 0)
+        self.assertLess(abs(visible_y.max() - foot_y), 4)
+        self.assertTrue(visible_x.min() <= foot_x <= visible_x.max())
         np.testing.assert_array_equal(photo[mask == 1], frame[mask == 1])
 
     async def test_same_mode_and_plain_invitation_do_not_reconnect(self):

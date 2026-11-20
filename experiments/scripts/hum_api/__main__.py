@@ -9,6 +9,7 @@ import sys
 from uuid import uuid4
 
 from photo_assistant.paths import PROJECT_ROOT
+from photo_assistant.persona import add_persona_options, load_persona_option
 from . import ApiError, DeepSeekClient, Image, PhotoSession
 
 
@@ -25,12 +26,14 @@ def parse_args(argv=None):
     p.add_argument('--max-tokens', type=int, default=4096)
     p.add_argument('--max-turns', type=int, default=20)
     p.add_argument('--allow-plain-speech', action='store_true', help='adapt untagged text to speak; recorded separately')
-    p.add_argument('--character-persona', default='自然、敏锐、友善，像真实伙伴一样回应，但不要无意义地重复说话。')
+    add_persona_options(p)
     p.add_argument('--sprite-catalog', type=Path, help='JSON catalog of tagged PNG character sprites')
     p.add_argument('--log-file', type=Path, help='local JSONL (default experiments/runtime/api/<unique run>.jsonl)')
     args = p.parse_args(argv)
     if not args.interactive and args.text is None and not args.image:
         p.error('provide --text, --image or --interactive')
+    if args.prompt_file is None:
+        load_persona_option(p, args)
     return args
 
 

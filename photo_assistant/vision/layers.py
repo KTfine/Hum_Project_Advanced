@@ -6,12 +6,13 @@ from typing import Protocol
 import numpy as np
 
 from .obstacles import panel_mask
+from .scene import SceneAnalysis
 
 
 class LiveMaskSource(Protocol):
     def set_enabled(self, enabled: bool) -> None: ...
-    def latest(self) -> tuple[np.ndarray, np.ndarray] | None: ...
-    def mask_for_capture(self, frame: np.ndarray) -> np.ndarray: ...
+    def latest(self) -> tuple[np.ndarray, np.ndarray | SceneAnalysis] | None: ...
+    def mask_for_capture(self, frame: np.ndarray) -> np.ndarray | SceneAnalysis: ...
 
 
 class SceneLayers:
@@ -43,6 +44,14 @@ class SceneLayers:
         self, frame: np.ndarray, avatar_index: int, *, capture: bool
     ) -> tuple[np.ndarray, tuple[np.ndarray, ...] | None, np.ndarray | None]:
         """Return a matched frame, occluders, and a person mask for ground calibration."""
+        frame, masks, person, scene = self.resolve(frame, avatar_index, capture=capture)
+        if scene is not None and masks is not None and avatar_index == 0:
+            masks = (*masks, *(obj.mask for obj in scene.objects))
+        return frame, masks, person
+
+    def resolve(self, frame: np.ndarray, avatar_index: int, *, capture: bool):
+        """Return base masks and optional scene inference from the same camera frame."""
+        scene = None
         masks = [mask for index, mask in self._static if index >= avatar_index]
         person = next((mask for index, mask in self._static if index == self._person_index), None)
         occludes = self._live_index >= avatar_index
@@ -56,9 +65,12 @@ class SceneLayers:
                 pair = None
             if pair is None:
                 if occludes:
-                    return frame, None, None
+                    return frame, None, None, None
             else:
                 frame, live_mask = pair
+                if isinstance(live_mask, SceneAnalysis):
+                    scene = live_mask
+                    live_mask = scene.person
                 if occludes:
                     masks.append(live_mask)
                 if self._live_index == self._person_index:
@@ -67,7 +79,7 @@ class SceneLayers:
             mask.shape != frame.shape[:2] for mask in masks
         ):
             raise RuntimeError("场景遮罩与相机画面尺寸不一致，请重新设置场景图层。")
-        if self._infer_obstacle and avatar_index == 0:
+        if self._infer_obstacle and avatar_index == 0 and (scene is None or not scene.objects):
             # Preview, API and shutter share a snapshot when the camera has not
             # advanced. Only immutable frames can safely reuse a detected mask.
             cached = self._panel_cache
@@ -79,4 +91,4 @@ class SceneLayers:
                     self._panel_cache = frame, obstacle
             if obstacle is not None:
                 masks.append(obstacle)
-        return frame, tuple(masks), person
+        return frame, tuple(masks), person, scene

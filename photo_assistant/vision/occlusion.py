@@ -1,9 +1,14 @@
-"""Run local person segmentation once per selected raw camera frame."""
+"""Schedule matched scene inference for previews and exact-exposure photos."""
+from __future__ import annotations
 from concurrent.futures import Future
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .scene import SceneAnalysis
 
 
 class PersonOcclusion:
@@ -23,7 +28,7 @@ class PersonOcclusion:
         self._generation = 0
         self._pending: tuple[np.ndarray, float] | None = None
         self._captures: dict[int, tuple[np.ndarray, Future]] = {}
-        self._latest: tuple[np.ndarray, np.ndarray] | None = None
+        self._latest: tuple[np.ndarray, np.ndarray | SceneAnalysis] | None = None
         self._latest_time = 0.0
         self._error: str | None = None
 
@@ -53,7 +58,7 @@ class PersonOcclusion:
                 self._pending = frame, time.monotonic()
                 self._condition.notify()
 
-    def latest(self) -> tuple[np.ndarray, np.ndarray] | None:
+    def latest(self) -> tuple[np.ndarray, np.ndarray | SceneAnalysis] | None:
         with self._condition:
             if self._error:
                 raise RuntimeError(self._error)
@@ -61,7 +66,7 @@ class PersonOcclusion:
                 return None
             return self._latest
 
-    def mask_for_capture(self, frame: np.ndarray) -> np.ndarray:
+    def mask_for_capture(self, frame: np.ndarray) -> np.ndarray | SceneAnalysis:
         with self._condition:
             if self._error:
                 raise RuntimeError(self._error)
@@ -99,7 +104,7 @@ class PersonOcclusion:
                 except Exception as exc:
                     with self._condition:
                         if generation == self._generation:
-                            self._error = f"人物分割失败：{exc}"
+                            self._error = f"合照场景分析失败：{exc}"
                             self._clear(self._error)
                     continue
                 with self._condition:

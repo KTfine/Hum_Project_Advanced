@@ -9,6 +9,7 @@ import json
 import time
 
 from photo_assistant.avatar.pose import AvatarPose, DEFAULT_SPRITE_CATALOG, load_pose_catalog
+from photo_assistant.persona import read_character_persona
 from photo_assistant.prompts import CO_PHOTO_COMMAND_PROMPT, PHOTO_GUIDANCE_PROMPT, character_name_for
 from photo_assistant.protocol import StreamingCommandParser
 from .client import ApiError, Image
@@ -16,8 +17,7 @@ from .client import ApiError, Image
 MODES = ('guidance', 'co-photo')
 
 
-def build_prompt(mode='guidance', *, character_name=None,
-                 character_persona='自然、敏锐、友善，像真实伙伴一样回应，但不要无意义地重复说话。',
+def build_prompt(mode='guidance', *, character_name=None, character_persona=None,
                  character_state=None, recent_context=None, sprite_catalog=None):
     if mode not in MODES:
         raise ValueError('Unknown photo mode')
@@ -39,7 +39,8 @@ def build_prompt(mode='guidance', *, character_name=None,
             **(character_state or {}),
         }
     return template.format(
-        character_name=character_name or character_name_for(sprite_catalog), character_persona=character_persona,
+        character_name=character_name or character_name_for(sprite_catalog),
+        character_persona=read_character_persona() if character_persona is None else character_persona,
         response_language='中文', pose_catalog=pose_catalog, tachie_fields=tachie_fields,
         entry_context='本次图文实验使用调用方提供的图片和起始姿势。随帧的脚点和倍率用于选择传送坐标。是否已经入镜、身体被谁遮住，要看当前合成图里的角色与前景轮廓。',
         current_character_state=json.dumps(character_state or {}, ensure_ascii=False),
@@ -61,6 +62,8 @@ class PhotoSession:
         self.client, self.mode = client, mode
         self.custom_prompt = system_prompt
         self.prompt_options = prompt_options
+        if system_prompt is None and prompt_options.get('character_persona') is None:
+            self.prompt_options['character_persona'] = read_character_persona()
         self.max_turns, self.allow_plain_speech = max_turns, allow_plain_speech
         self._history = []
         self._busy = False

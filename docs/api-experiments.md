@@ -55,7 +55,7 @@ python -m experiments.scripts.hum_api --interactive
 | `--prompt-file` | 完整 UTF-8 system 文本，按字面使用，不填占位符 |
 | `--mode` | 默认 `guidance`，也可 `co-photo` |
 | `--sprite-catalog` | 合照会读取项目内的立绘标签库。此选项可指定自己的 JSON 图库。实验入口组装提示词和解析标签；角色渲染由实时客户端执行。 |
-| `--character-persona` | 修改内置模板的角色设定 |
+| `--character-persona-file` / `--character-persona` | 指定 UTF-8 性格文件，或直接提供本次实验的性格文字。默认读取[角色性格.txt](../角色性格.txt)。 |
 | `--model` | 默认 `deepseek-flash`；更换后需确认图像能力 |
 | `--thinking` | `off / low / high / max`，默认 `low` |
 | `--timeout` | 整轮请求默认 90 秒，覆盖连接、上传和读取流，不自动重试 |

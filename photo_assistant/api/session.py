@@ -9,7 +9,7 @@ import uuid
 
 from .client import ENDPOINT, ApiError, DeepSeekClient, Image
 from photo_assistant.prompts import OBSERVATION_MARKER, OBSERVATION_MESSAGE
-from photo_assistant.protocol import StreamingCommandParser
+from photo_assistant.protocol import CHARACTER_ACTIONS, StreamingCommandParser
 
 
 _OBSERVATION_TASKS = {
@@ -72,7 +72,7 @@ class DirectSession:
         self._closed = False
 
     def submit_frame(self, jpeg: bytes | None, text: str | None = None, *,
-                     placement: dict[str, float | str] | None = None) -> None:
+                     placement: dict | None = None) -> None:
         """Accept the latest frame, giving new human input priority over observation."""
         if self._closed:
             raise RuntimeError("Photo session is closed")
@@ -103,7 +103,7 @@ class DirectSession:
         else:
             if self._managed_observations:
                 if (self.pending_observation is None or self._awaiting_delivery
-                        or (self._wait_for_placement and placement is None)):
+                        or (self._wait_for_placement and (placement is None or not placement.get("avatar_visible", True)))):
                     return
                 text = _OBSERVATION_TASKS[self.pending_observation]
             elif self._observe:
@@ -193,7 +193,7 @@ class DirectSession:
         elif self.pending_observation == "capture" and "capture" in kinds:
             self.pending_observation = None
         elif self.pending_observation == "feedback":
-            if "speak" in kinds or (source == "handoff" and kinds & {"follow", "teleport", "tachie", "layer", "rotate"}):
+            if "speak" in kinds or (source == "handoff" and kinds & CHARACTER_ACTIONS):
                 self.pending_observation = None
 
     def handoff_messages(self) -> tuple[dict[str, str], ...]:

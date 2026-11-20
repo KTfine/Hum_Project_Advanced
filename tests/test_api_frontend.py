@@ -88,9 +88,29 @@ class DirectApiStartupTests(unittest.TestCase):
             self.assertIn("文字输入", prompt)
             self.assertNotIn("麦克风", prompt)
             if mode == "co-photo":
-                self.assertIn("切换立绘：" + canvas.avatar_frames.catalog.entry_pose.command(), prompt)
+                example = next(line for line in prompt.splitlines() if line.startswith("- 切换立绘"))
+                self.assertIn(canvas.avatar_frames.catalog.entry_pose.command(), example)
             else:
                 self.assertNotIn("<tachie:", prompt)
+
+    def test_persona_file_reaches_both_modes_from_another_working_directory(self):
+        from photo_assistant.persona import DEFAULT_PERSONA_FILE
+
+        canvas = SimpleNamespace(
+            avatar_frames=SimpleNamespace(catalog=load_pose_catalog(DEFAULT_SPRITE_CATALOG)),
+            scene_layers=client.SceneLayers({}),
+            controller=SimpleNamespace(render_state=lambda: (client.AvatarState(.5, .95, 1, 0), True, 1.0)),
+        )
+        with contextlib.chdir(self.settings.parent):
+            custom = Path("另一份 角色.txt")
+            custom.write_text("温和、好奇。\n喜欢用短句。\n", encoding="utf-8-sig")
+            self.assertEqual(client.parse_args([]).character_persona,
+                             DEFAULT_PERSONA_FILE.read_text(encoding="utf-8-sig").strip())
+            args = client.parse_args(["--character-persona-file", str(custom)])
+            custom.unlink()
+            for mode in client.MODES:
+                self.assertIn("角色设定：温和、好奇。\n喜欢用短句。", client.build_control_prompt(canvas, args, mode=mode))
+            self.assertEqual(client.parse_args(["--character-persona", "直率"]).character_persona, "直率")
 
 
 class ConsoleInputTests(unittest.IsolatedAsyncioTestCase):

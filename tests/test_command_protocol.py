@@ -34,6 +34,31 @@ class StreamingCommandParserTests(unittest.TestCase):
         self.assertEqual(commands[0].params, {"text": "向左一点。"})
         self.assertEqual(commands[1].params, SPRITE_PARAMS)
 
+    def test_composition_tags_survive_streaming_and_precede_the_shutter(self):
+        stream = "<peek><sit><sit:table=near><sit:table=far><sit:y=0.42,x=0.6><stand><follow><capture>"
+        expected = [("peek", {}), ("sit", {}), ("sit", {"table": "near"}), ("sit", {"table": "far"}),
+                    ("sit", {"x": 0.6, "y": 0.42}),
+                    ("stand", {}), ("follow", {}), ("capture", {})]
+        for plain in (False, True):
+            parser = self.make_parser(allow_plain_speech=plain)
+            commands = []
+            for char in stream:
+                emitted = parser.feed("r", char)
+                if char != ">":
+                    self.assertEqual(emitted, [])
+                commands.extend(emitted)
+            self.assertEqual([(c.kind, c.params) for c in commands], expected)
+
+    def test_malformed_scene_requests_do_not_move_the_avatar(self):
+        malformed = ("<sit:>", "<sit:x=0.4>", "<sit:x=.4,y=-.01>", "<sit:x=nan,y=.2>",
+                     "<sit:x=0.1,x=0.2,y=0.2>", "<sit:x=.1,y=.2,depth=far>",
+                     "<sit:table=first>", "<sit:x=.5,y=.6,table=near>", "<stand:>",
+                     "<peek:side=left>", "<sitting>", "<standing>")
+        for tag in malformed:
+            with self.subTest(tag=tag):
+                commands = self.make_parser(allow_plain_speech=True).feed("r", tag + "<capture>")
+                self.assertEqual([c.kind for c in commands], ["capture"])
+
     def test_split_sprite_tag_switches_once_before_capture(self):
         for split in range(1, len(SPRITE_TAG)):
             with self.subTest(split=split):
@@ -70,6 +95,18 @@ class StreamingCommandParserTests(unittest.TestCase):
         parser = self.make_parser(allow_plain_speech=True)
         commands = parser.feed("r1", "<speak:看镜头。><capture><speak:好了。>")
         self.assertEqual([c.kind for c in commands], ["speak", "capture", "speak"])
+
+    def test_mixed_speech_closer_is_adapted_without_reading_markup(self):
+        for plain in (False, True):
+            for closer in ("</speak>", "</speak:>"):
+                parser = self.make_parser(allow_plain_speech=plain)
+                commands = []
+                for char in f"<speak:到了。{closer}<wait:feedback>":
+                    commands.extend(parser.feed("r", char))
+                expected = [("speak", {"text": "到了。"})] if plain else []
+                expected.append(("wait", {"task": "feedback"}))
+                self.assertEqual([(cmd.kind, cmd.params) for cmd in commands], expected)
+                self.assertEqual(parser.plain_speech_count, int(plain))
 
     def test_layer_slot_emits_on_close_and_in_order_with_shutter(self):
         tag = "<layer:to,index=2>"

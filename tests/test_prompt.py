@@ -29,7 +29,7 @@ class StreamingCommandPromptTests(unittest.TestCase):
         self.assertIn("小航", rendered)
         self.assertIn("用户希望拍一张严肃的证件照", rendered)
         self.assertIn("当前任务：真人拍照指导", rendered)
-        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'blank', 'mode', 'capture'})
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'blank', 'mode', 'capture', 'wait'})
         self.assertNotIn('<tachie:', rendered)
         self.assertNotIn('入场', rendered)
         self.assertNotIn('初始角色状态', rendered)
@@ -50,6 +50,14 @@ class StreamingCommandPromptTests(unittest.TestCase):
             self.assertEqual(command.kind, "teleport")
         sprite_examples = re.findall(r'<tachie:[^>]+>', actions)
         self.assertTrue(sprite_examples)
+        movement, rest = actions.split("具体姿势与表情", 1)
+        poses, rest = rest.split("画面调整", 1)
+        adjustments, _ = rest.split("当前图库", 1)
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', movement)),
+                         {"stand", "follow", "peek", "sit", "teleport"})
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', poses)), {"tachie"})
+        self.assertIn("<layer:", adjustments)
+        self.assertIn("<rotate:", adjustments)
         for example in sprite_examples:
             commands = StreamingCommandParser().feed("prompt", example)
             self.assertEqual(len(commands), 1, example)
@@ -58,7 +66,23 @@ class StreamingCommandPromptTests(unittest.TestCase):
             for value in values:
                 self.assertIn(value, rendered)
         self.assertIn('x=0.5', rendered)
-        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'teleport', 'rotate', 'tachie', 'layer', 'blank', 'mode', 'capture'})
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {
+            'speak', 'teleport', 'rotate', 'tachie', 'layer', 'blank', 'mode', 'capture', 'wait', 'follow',
+            'peek', 'sit', 'stand',
+        })
+
+    def test_live_scene_geometry_is_explained_only_in_co_photo(self):
+        live = self.render_prompt(prompts.CO_PHOTO_COMMAND_PROMPT)
+        guidance = self.render_prompt()
+        for field in ("scene_objects", "center_x", "foot_y", "behind_y", "front_y",
+                      "standing_height_ratio", "avatar_visible"):
+            self.assertIn(field, live)
+            self.assertNotIn(field, guidance)
+        self.assertIn("同类可以有多件", live)
+        example, = (tag for tag in re.findall(r'<teleport:[^>]+>', live) if 'depth=far' in tag)
+        command, = StreamingCommandParser().feed("far", example)
+        self.assertEqual(command.params["depth"], "far")
+        self.assertNotIn("scale", command.params)
 
     def test_action_line_uses_a_complete_command_from_the_loaded_catalog(self):
         from experiments.scripts.hum_api.session import build_prompt

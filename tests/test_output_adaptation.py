@@ -111,6 +111,24 @@ class Socket:
 
 
 class ReceiverAdaptationTests(unittest.TestCase):
+    def test_automatic_feedback_cannot_move_seat_or_stand_the_avatar(self):
+        log = EventLog()
+        canvas = RecordingCanvas()
+        socket = Socket([
+            {'type': 'response.output.delta', 'kind': 'text', 'turn_source': 'observation',
+             'observation_task': 'feedback', 'response_id': 'r',
+             'text': '<peek><sit:table=far><stand><follow><speak:到了。><capture>'},
+            {'type': 'session.closed', 'reason': 'test'},
+        ])
+        with contextlib.redirect_stdout(io.StringIO()):
+            asyncio.run(client.receive_realtime_outputs(socket, threading.Event(), canvas,
+                        client.SpeechQueue(), verbose=False, event_log=log))
+        self.assertEqual(canvas.commands, [])
+        skipped = [(r['command']['kind'], r['reason']) for r in log.rows if r['event'] == 'command.skipped']
+        self.assertEqual(skipped, [(kind, 'character_action_requires_user_turn')
+                                   for kind in ('peek', 'sit', 'stand', 'follow')] + [('capture', 'no_pending_shutter')])
+        self.assertEqual([r['text'] for r in log.rows if r['event'] == 'speak'], ['到了。'])
+
     def test_native_text_dispatches_before_next_fragment_or_turn_end(self):
         log = EventLog()
         canvas = RecordingCanvas()

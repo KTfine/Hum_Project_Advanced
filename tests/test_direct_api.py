@@ -140,8 +140,11 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
         session = DirectSession("co-photo", http)
         self.addAsyncCleanup(session.close)
         first, next_frame = b"\xff\xd8\xffA", b"\xff\xd8\xffB"
-        initial = {"x": 0.63, "y": 0.87, "scale": 1.0}
-        updated = {"x": 0.63, "y": 0.87, "scale": 1.5}
+        initial = {"x": 0.63, "y": 0.87, "scale": 1.0, "standing_height_ratio": 0.62,
+                   "scene_objects": [{"label": "dining table", "center_x": 0.22, "behind_y": 0.54},
+                                     {"label": "dining table", "center_x": 0.68, "behind_y": 0.67}]}
+        updated = {"x": 0.63, "y": 0.87, "scale": 1.5, "standing_height_ratio": 0.93,
+                   "scene_objects": []}
         session.submit_frame(first, placement=initial)
         session.submit_frame(None, "原地变大一点")
         await read_until(session, "response.done")

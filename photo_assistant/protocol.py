@@ -14,7 +14,9 @@ DEFAULT_TRANSITION_MS = 350
 # The visible frame is 0..1. Extra travel accommodates cropped, enlarged poses.
 MIN_POSITION = -2.0
 MAX_POSITION = 3.0
-_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait):|<(blank|(?:capture|follow)(?=>))")
+CHARACTER_ACTIONS = frozenset({"follow", "peek", "sit", "stand", "teleport", "tachie", "layer", "rotate"})
+_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait|sit):"
+                        r"|<(blank|(?:capture|follow|peek|sit|stand)(?=>))")
 _STARTERS = (
     "<speak:",
     "<teleport:",
@@ -24,6 +26,10 @@ _STARTERS = (
     "<photo:",
     "<capture>",
     "<follow>",
+    "<peek>",
+    "<sit>",
+    "<sit:",
+    "<stand>",
     "<mode:",
     "<wait:",
     "<blank>",
@@ -164,7 +170,12 @@ class StreamingCommandParser:
             body = self._buffer[body_start:delimiter]
             self._buffer = self._buffer[closing_run_end:]
 
-            command = _parse_command(kind, body)
+            # Some model replies mix the compact speech opener with an XML closer.
+            if kind == "speak" and body.endswith(("</speak", "</speak:")):
+                if self.allow_plain_speech:
+                    commands.extend(self._plain_speech(body.rsplit("</speak", 1)[0].strip()))
+                continue
+            command = _parse_command(kind, body, parameterized=match.group(1) is not None)
             if command is not None:
                 commands.append(command)
 
@@ -197,8 +208,8 @@ class StreamingCommandParser:
         return ""
 
 
-def _parse_command(kind: str, body: str) -> Command | None:
-    if kind in {"blank", "capture", "follow"}:
+def _parse_command(kind: str, body: str, *, parameterized: bool) -> Command | None:
+    if not parameterized:
         return Command(kind, {}) if not body.strip() else None
     if kind == "speak":
         text = body.strip()
@@ -236,6 +247,14 @@ def _parse_command(kind: str, body: str) -> Command | None:
     if kind == "teleport":
         target = teleport_destination(values)
         return Command("teleport", target) if target is not None else None
+
+    if kind == "sit":
+        if values.keys() == {"table"} and values["table"] in {"near", "far"}:
+            return Command("sit", values)
+        if values.keys() == {"x", "y"}:
+            x, y = _finite_number(values["x"]), _finite_number(values["y"])
+            if x is not None and y is not None and 0 <= x <= 1 and 0 <= y <= 1:
+                return Command("sit", {"x": x, "y": y})
 
     if kind == "layer":
         if mode != "to" or set(values) != {"index"} or not re.fullmatch(r"[0-9]+", values["index"]):
