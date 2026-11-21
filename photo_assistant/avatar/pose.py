@@ -17,7 +17,7 @@ WHITE_DRAGON_CATALOG = PROJECT_ROOT / "models/avatars/white_dragon/catalog.json"
 SPRITE_OPTIONS = {
     "face": ("微笑", "龇牙笑", "高冷表情"),
     "hand": ("比耶", "无动作"),
-    "arm": ("自然下垂", "伸直举高过头", "背在身后"),
+    "arm": ("自然下垂", "伸直举高过头", "背在身后", "左手扶墙", "右手扶墙"),
     "torso": ("正着站", "半身歪斜向右"),
     "legs": ("站着", "坐着", "蹲下"),
 }
@@ -54,21 +54,22 @@ class SpriteEntry:
     anchor_px: tuple[float, float]
     face_box_px: tuple[float, float, float, float] | None = None
     seat_contact_px: tuple[float, float] | None = None
+    wall_contact_px: tuple[float, float] | None = None
 
 
-def _patterns(rows: Sequence[tuple[str, ...]], fields: tuple[str, ...]) -> list[tuple[str, ...]]:
+def _patterns(rows: Sequence[tuple[str, ...]], options: tuple[tuple[str, ...], ...]) -> list[tuple[str, ...]]:
     """Group identical suffixes, preserving the exact set of available combinations."""
-    if not fields:
+    if not options:
         return [()]
     groups = {}
-    for value in SPRITE_OPTIONS[fields[0]]:
+    for value in options[0]:
         suffixes = tuple(sorted(row[1:] for row in rows if row[0] == value))
         if suffixes:
             groups.setdefault(suffixes, []).append(value)
     patterns = []
     for suffixes, values in groups.items():
-        prefix = "*" if len(values) == len(SPRITE_OPTIONS[fields[0]]) else "/".join(values)
-        for suffix in _patterns(suffixes, fields[1:]):
+        prefix = "*" if len(values) == len(options[0]) else "/".join(values)
+        for suffix in _patterns(suffixes, options[1:]):
             patterns.append((prefix,) + suffix)
     return patterns
 
@@ -108,16 +109,27 @@ class PoseCatalog:
             lines.append("每一行对应一张实际图片。要换图时整行复制，保留这张图的全部五项。")
             lines.extend(pose.command() for pose in self.entries)
         else:
-            lines.extend(f"{k} 可选 {'、'.join(v)}" for k, v in SPRITE_OPTIONS.items())
+            options = {}
+            for field, allowed in SPRITE_OPTIONS.items():
+                used = {getattr(pose, field) for pose in self.entries}
+                options[field] = tuple(value for value in allowed if value in used)
+            lines.extend(f"{k} 可选 {'、'.join(v)}" for k, v in options.items())
             lines.append("可用组合按 " + " | ".join(fields) + " 排列。* 表示该字段任一枚举值，/ 表示任选其一；输出时每项必须填一个具体值。")
             rows = [tuple(asdict(pose).values()) for pose in self.entries]
-            lines.extend(" | ".join(p) for p in _patterns(rows, fields))
+            lines.extend(" | ".join(p) for p in _patterns(rows, tuple(options.values())))
             lines.append("切换示例 " + self.default_pose.command())
         return "\n".join(lines)
 
 
 def _number(value) -> bool:
     return type(value) in (float, int) and math.isfinite(value)
+
+
+def _point(value, field, filename, max_x, max_y) -> tuple[float, float]:
+    if (not isinstance(value, list) or len(value) != 2 or not all(_number(v) for v in value)
+            or not 0 <= value[0] <= max_x or not 0 <= value[1] <= max_y):
+        raise ValueError(f"{field} 须为图内的 [x, y]：{filename}")
+    return float(value[0]), float(value[1])
 
 
 def _entry(row: dict, directory: Path) -> SpriteEntry:
@@ -134,12 +146,9 @@ def _entry(row: dict, directory: Path) -> SpriteEntry:
         raise ValueError(f"立绘须为 8 位 RGBA PNG：{filename}")
     width, height = struct.unpack(">II", header[16:24])
     size = row.get("standing_height_px")
-    anchor = row.get("anchor_px")
     if not _number(size) or size <= 0:
         raise ValueError("standing_height_px 须为正数")
-    if (not isinstance(anchor, list) or len(anchor) != 2 or not all(_number(v) for v in anchor)
-            or not 0 <= anchor[0] <= width or not 0 <= anchor[1] <= height):
-        raise ValueError(f"anchor_px 须为图内的 [x, y]：{filename}")
+    anchor = _point(row.get("anchor_px"), "anchor_px", filename, width, height)
     face_box = row.get("face_box_px")
     if face_box is not None:
         if (not isinstance(face_box, list) or len(face_box) != 4 or not all(_number(v) for v in face_box)
@@ -147,13 +156,13 @@ def _entry(row: dict, directory: Path) -> SpriteEntry:
                 or not 0 <= face_box[1] < face_box[3] <= height):
             raise ValueError(f"face_box_px 须为图内的 [左, 上, 右, 下]：{filename}")
         face_box = tuple(face_box)
-    contact = row.get("seat_contact_px")
-    if contact is not None:
-        if (not isinstance(contact, list) or len(contact) != 2 or not all(_number(v) for v in contact)
-                or not 0 <= contact[0] <= width or not 0 <= contact[1] <= height):
-            raise ValueError(f"seat_contact_px 须为图内的 [x, y]：{filename}")
-        contact = tuple(contact)
-    return SpriteEntry(path, float(size), (float(anchor[0]), float(anchor[1])), face_box, contact)
+    seat = row.get("seat_contact_px")
+    if seat is not None:
+        seat = _point(seat, "seat_contact_px", filename, width, height)
+    palm = row.get("wall_contact_px")
+    if palm is not None:
+        palm = _point(palm, "wall_contact_px", filename, width - 1, height - 1)
+    return SpriteEntry(path, float(size), anchor, face_box, seat, palm)
 
 
 def load_pose_catalog(path: Path) -> PoseCatalog:

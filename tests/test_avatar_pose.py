@@ -7,7 +7,8 @@ import unittest
 
 from photo_assistant.avatar.frames import AvatarFrames
 from photo_assistant.avatar.pose import (
-    AvatarPose, DEFAULT_SPRITE_CATALOG, PoseCatalog, SPRITE_OPTIONS, SpriteEntry, load_pose_catalog,
+    AvatarPose, DEFAULT_SPRITE_CATALOG, PoseCatalog, SPRITE_OPTIONS, SpriteEntry, WHITE_DRAGON_CATALOG,
+    load_pose_catalog,
 )
 
 
@@ -37,6 +38,29 @@ class AvatarPoseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 catalog.select(invalid)
         self.assertIn(AvatarPose().command(), catalog.describe())
+
+    def test_wall_poses_are_available_only_in_the_white_dragon_catalog(self):
+        frames = AvatarFrames(WHITE_DRAGON_CATALOG)
+        self.addCleanup(frames.close)
+        dragon = frames.catalog
+        self.assertEqual(dragon.standing_pose.arm, "自然下垂")
+        vita = load_pose_catalog(DEFAULT_SPRITE_CATALOG)
+        for arm, filename, side in (("左手扶墙", "wall-brace.png", 1), ("右手扶墙", "wall-brace-left.png", -1)):
+            with self.subTest(arm=arm):
+                wall_pose = AvatarPose(arm=arm)
+                self.assertEqual(dragon.select(asdict(wall_pose)), wall_pose)
+                entry = dragon.entry(wall_pose)
+                self.assertEqual(entry.path.name, filename)
+                x, y = map(int, entry.wall_contact_px)
+                self.assertGreater((x - entry.anchor_px[0]) * side, 0)
+                self.assertLess(y, entry.anchor_px[1])
+                alpha = frames.frame(wall_pose)[:, :, 3]
+                self.assertGreater(alpha[y, x], 220)
+                self.assertLess(alpha[y, x + 4 * side], 32)
+                self.assertIn(wall_pose.command(), dragon.describe())
+                self.assertNotIn(arm, vita.describe())
+                with self.assertRaises(ValueError):
+                    vita.select(asdict(wall_pose))
 
     def test_sparse_entry_prefers_available_leaning_pose_in_priority_order(self):
         entry = SpriteEntry(Path("sample.png"), 400, (80, 400))
@@ -93,6 +117,7 @@ class AvatarPoseTests(unittest.TestCase):
             (folder / row["file"]).write_bytes(sample.read_bytes())
             self.assertEqual(frames.frame(pose).shape[2], 4)
             for rows in ((row, row), ({**row, "standing_height_px": 0},), ({**row, "anchor_px": [1, -3]},),
+                         ({**row, "wall_contact_px": [99999, 0]},), ({**row, "wall_contact_px": [2]},),
                          ({**row, "file": "../outside.png"},), ()):
                 write(*rows)
                 with self.assertRaises(ValueError):

@@ -35,7 +35,7 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 | --- | --- |
 | face | 微笑、龇牙笑、高冷表情 |
 | hand | 比耶、无动作 |
-| arm | 自然下垂、伸直举高过头、背在身后 |
+| arm | 自然下垂、伸直举高过头、背在身后、左手扶墙、右手扶墙 |
 | torso | 正着站、半身歪斜向右 |
 | legs | 站着、坐着、蹲下 |
 
@@ -54,6 +54,12 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 龇牙笑版本的双眼弯成月牙，嘴角扬起，露出一排小白牙。切换指令为 `<tachie:face=龇牙笑,hand=无动作,arm=自然下垂,torso=半身歪斜向右,legs=站着>`。改回 `face=微笑` 即可恢复入场表情。[龇牙笑立绘](white_dragon/peek-right-grin.png)
 
 正站时双脚并拢，双臂垂在裙侧，手指微弯。参考图中的平静闭口表情登记为 `高冷表情`。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=站着>`。[自然正站立绘](white_dragon/stand-relaxed.png)
+
+扶墙时，小白龙微笑站立，左手抬向画面右侧，掌心贴墙，右手垂在裙边。切换指令为 `<tachie:face=微笑,hand=无动作,arm=左手扶墙,torso=正着站,legs=站着>`。[左手扶墙立绘](white_dragon/wall-brace.png)
+
+墙在画面左侧时，选小白龙自己的右手扶墙。切换指令为 `<tachie:face=微笑,hand=无动作,arm=右手扶墙,torso=正着站,legs=站着>`。[右手扶墙立绘](white_dragon/wall-brace-left.png)
+
+扶墙立绘的 `wall_contact_px` 标在手掌朝向墙面的外沿，坐标从 PNG 左上角起算。左手图为 `[922, 415]`，右手图为 `[36, 425]`。两张图各自沿用目录里的脚底锚点与站高。
 
 单膝蹲沿用正站的表情，画面左脚踩实，另一侧膝盖落地，一只手搭在抬起的膝上。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=蹲下>`。[单膝蹲立绘](white_dragon/kneel.png)
 

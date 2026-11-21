@@ -14,9 +14,9 @@ DEFAULT_TRANSITION_MS = 350
 # The visible frame is 0..1. Extra travel accommodates cropped, enlarged poses.
 MIN_POSITION = -2.0
 MAX_POSITION = 3.0
-CHARACTER_ACTIONS = frozenset({"follow", "peek", "sit", "stand", "teleport", "tachie", "layer", "rotate"})
-_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait|sit):"
-                        r"|<(blank|(?:capture|follow|peek|sit|stand)(?=>))")
+CHARACTER_ACTIONS = frozenset({"follow", "peek", "sit", "brace", "stand", "teleport", "tachie", "layer", "rotate"})
+_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait|sit|brace):"
+                        r"|<(blank|(?:capture|follow|peek|sit|brace|stand)(?=>))")
 _STARTERS = (
     "<speak:",
     "<teleport:",
@@ -29,6 +29,8 @@ _STARTERS = (
     "<peek>",
     "<sit>",
     "<sit:",
+    "<brace>",
+    "<brace:",
     "<stand>",
     "<mode:",
     "<wait:",
@@ -247,6 +249,11 @@ def _parse_command(kind: str, body: str, *, parameterized: bool) -> Command | No
     if kind == "teleport":
         target = teleport_destination(values)
         return Command("teleport", target) if target is not None else None
+
+    if kind == "brace" and values.keys() == {"x"}:
+        x = _finite_number(values["x"])
+        if x is not None and 0 <= x <= 1:
+            return Command("brace", {"x": x})
 
     if kind == "sit":
         if values.keys() == {"table"} and values["table"] in {"near", "far"}:

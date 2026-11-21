@@ -4,6 +4,7 @@ import contextlib
 import io
 import threading
 import unittest
+from unittest.mock import Mock
 
 from photo_assistant.protocol import StreamingCommandParser
 import photo_assistant.client as client
@@ -111,13 +112,41 @@ class Socket:
 
 
 class ReceiverAdaptationTests(unittest.TestCase):
+    def test_missing_wall_contact_skips_later_shutter_chunk_only_in_same_response(self):
+        log = EventLog()
+        canvas = Mock(spec=RecordingCanvas)
+        canvas.apply_command.return_value = None
+        shutter = Mock(spec=client.PhotoCapture)
+        shutter.save.return_value = "next-photo.png"
+        delta = {'type': 'response.output.delta', 'kind': 'text', 'turn_source': 'user'}
+        socket = Socket([
+            {**delta, 'response_id': 'wall', 'text': '<brace>'},
+            {**delta, 'response_id': 'wall', 'text': '<capture>'},
+            {'type': 'response.done', 'response_id': 'wall'},
+            {**delta, 'response_id': 'next', 'text': '<capture>'},
+            {'type': 'session.closed', 'reason': 'test'},
+        ])
+        with contextlib.redirect_stdout(io.StringIO()):
+            asyncio.run(client.receive_realtime_outputs(socket, threading.Event(), canvas,
+                        client.SpeechQueue(), verbose=False, event_log=log, photo_capture=shutter))
+
+        canvas.apply_command.assert_called_once_with(client.Command('brace', {}))
+        shutter.save.assert_called_once_with()
+        next_turn = next(i for i, row in enumerate(log.rows) if row['event'] == 'api.receive'
+                         and row['message'].get('response_id') == 'next')
+        first = log.rows[:next_turn]
+        self.assertEqual([(r['command']['kind'], r['reason']) for r in first if r['event'] == 'command.skipped'],
+                         [('brace', 'no_scene_placement'), ('capture', 'wall_contact_missing')])
+        self.assertFalse(any(r['event'] == 'photo.saved' for r in first))
+        self.assertEqual([r['path'] for r in log.rows[next_turn:] if r['event'] == 'photo.saved'], ['next-photo.png'])
+
     def test_automatic_feedback_cannot_move_seat_or_stand_the_avatar(self):
         log = EventLog()
         canvas = RecordingCanvas()
         socket = Socket([
             {'type': 'response.output.delta', 'kind': 'text', 'turn_source': 'observation',
              'observation_task': 'feedback', 'response_id': 'r',
-             'text': '<peek><sit:table=far><stand><follow><speak:到了。><capture>'},
+             'text': '<peek><sit:table=far><brace:x=.25><stand><follow><speak:到了。><capture>'},
             {'type': 'session.closed', 'reason': 'test'},
         ])
         with contextlib.redirect_stdout(io.StringIO()):
@@ -126,7 +155,7 @@ class ReceiverAdaptationTests(unittest.TestCase):
         self.assertEqual(canvas.commands, [])
         skipped = [(r['command']['kind'], r['reason']) for r in log.rows if r['event'] == 'command.skipped']
         self.assertEqual(skipped, [(kind, 'character_action_requires_user_turn')
-                                   for kind in ('peek', 'sit', 'stand', 'follow')] + [('capture', 'no_pending_shutter')])
+                                   for kind in ('peek', 'sit', 'brace', 'stand', 'follow')] + [('capture', 'no_pending_shutter')])
         self.assertEqual([r['text'] for r in log.rows if r['event'] == 'speak'], ['到了。'])
 
     def test_native_text_dispatches_before_next_fragment_or_turn_end(self):

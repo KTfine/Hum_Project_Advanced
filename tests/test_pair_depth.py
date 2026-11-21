@@ -4,10 +4,10 @@ import unittest
 
 import numpy as np
 
+from photo_assistant.vision.beside import side_placement
 from photo_assistant.vision.ground import GroundProjection
 from photo_assistant.vision.scene import SceneAnalysis
 from photo_assistant.vision.scene_objects import SceneObject
-from photo_assistant.vision.shoulder import side_placement
 
 
 class PairDepthTests(unittest.TestCase):

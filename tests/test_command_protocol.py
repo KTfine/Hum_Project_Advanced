@@ -35,9 +35,9 @@ class StreamingCommandParserTests(unittest.TestCase):
         self.assertEqual(commands[1].params, SPRITE_PARAMS)
 
     def test_composition_tags_survive_streaming_and_precede_the_shutter(self):
-        stream = "<peek><sit><sit:table=near><sit:table=far><sit:y=0.42,x=0.6><stand><follow><capture>"
+        stream = "<peek><sit><sit:table=near><sit:table=far><sit:y=0.42,x=0.6><brace><brace:x=.25><stand><follow><capture>"
         expected = [("peek", {}), ("sit", {}), ("sit", {"table": "near"}), ("sit", {"table": "far"}),
-                    ("sit", {"x": 0.6, "y": 0.42}),
+                    ("sit", {"x": 0.6, "y": 0.42}), ("brace", {}), ("brace", {"x": 0.25}),
                     ("stand", {}), ("follow", {}), ("capture", {})]
         for plain in (False, True):
             parser = self.make_parser(allow_plain_speech=plain)
@@ -53,7 +53,8 @@ class StreamingCommandParserTests(unittest.TestCase):
         malformed = ("<sit:>", "<sit:x=0.4>", "<sit:x=.4,y=-.01>", "<sit:x=nan,y=.2>",
                      "<sit:x=0.1,x=0.2,y=0.2>", "<sit:x=.1,y=.2,depth=far>",
                      "<sit:table=first>", "<sit:x=.5,y=.6,table=near>", "<stand:>",
-                     "<peek:side=left>", "<sitting>", "<standing>")
+                     "<peek:side=left>", "<brace:>", "<brace:x=nan>", "<brace:x=1.02>",
+                     "<brace:side=left>", "<brace:x=.2,y=.4>", "<sitting>", "<standing>")
         for tag in malformed:
             with self.subTest(tag=tag):
                 commands = self.make_parser(allow_plain_speech=True).feed("r", tag + "<capture>")

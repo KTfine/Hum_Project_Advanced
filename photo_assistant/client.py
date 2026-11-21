@@ -30,6 +30,7 @@ from .paths import PROJECT_ROOT
 from .persona import add_persona_options, load_persona_option
 from .prompts import CO_PHOTO_COMMAND_PROMPT, LIVE_ENTRY_CONTEXT, PHOTO_GUIDANCE_PROMPT, character_name_for
 from .protocol import CHARACTER_ACTIONS, Command, StreamingCommandParser
+from .vision.beside import side_placement
 from .vision.camera import open_camera
 from .vision.framing import DepartureWatch, Placement
 from .vision.ground import camera_reference, projected_height
@@ -37,10 +38,12 @@ from .vision.head import measure_face
 from .vision.layers import LiveMaskSource, SceneLayers
 from .vision.occlusion import PersonOcclusion
 from .vision.peek import peek_placement
-from .vision.perspective import matched_standing_height_px, person_reference, standing_height_px
+from .vision.perspective import (
+    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, matched_standing_height_px, person_reference, standing_height_px,
+)
 from .vision.scene import SceneSegmenter
 from .vision.seat import table_seat
-from .vision.shoulder import PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, side_placement
+from .vision.support import WallBrace, wall_brace
 
 
 MODES = ("guidance", "co-photo")
@@ -498,6 +501,7 @@ class CanvasSource:
         self._entrance: _PendingEntrance | None = None
         self._fixed: Placement | None = None
         self._seat = None
+        self._brace: WallBrace | None = None
         self._departure: DepartureWatch | None = None
         self._pose_override: AvatarPose | None = None
         self._alongside_height_ratio: float | None = None
@@ -536,6 +540,7 @@ class CanvasSource:
             self._show_character = show_character
             if entrance is not None:
                 self._seat = None
+                self._brace = None
                 self._projection_anchor = self._body_horizon = None
                 self._manual_layer = False
                 self._fixed = self._departure = self._alongside_height_ratio = None
@@ -548,6 +553,7 @@ class CanvasSource:
                 self._entrance = _PendingEntrance(entrance) if wait_for_edge else None
             elif not show_character:
                 self._seat = None
+                self._brace = None
                 self._projection_anchor = self._body_horizon = None
                 self._manual_layer = False
                 self._entrance = None
@@ -577,7 +583,7 @@ class CanvasSource:
     def apply_command(self, command: Command) -> AvatarState | None:
         if self.controller is None:
             raise RuntimeError("canvas has not been started")
-        if command.kind in ("peek", "sit"):
+        if command.kind in ("peek", "sit", "brace"):
             return self._scene_pose_once(command)
         if command.kind == "stand":
             command = Command("tachie", vars(self.avatar_frames.catalog.standing_pose))
@@ -592,6 +598,12 @@ class CanvasSource:
                 self.avatar_frames.frame(pose)
             except OSError as exc:
                 raise ValueError(f"无法读取立绘：{exc}") from exc
+            if (self._project_scene and self._show_character
+                    and self.avatar_frames.catalog.entry(pose).wall_contact_px is not None):
+                with self._placement_lock:
+                    if self._brace is not None and self._brace.pose == pose:
+                        return self.controller.state_at()
+                return self._scene_pose_once(Command("brace", {}), requested_pose=pose)
             if (pose.legs == "坐着" and self._project_scene and self._show_character
                     and getattr(self.avatar_frames.catalog.entry(pose), "seat_contact_px", None) is not None):
                 # A separate artwork command can arrive after a semantic sit in
@@ -618,6 +630,14 @@ class CanvasSource:
             self._input_revision += 1
             if command.kind == "layer":
                 self._manual_layer = True
+            if self._brace is not None and (command.kind in ("tachie", "teleport")
+                                            or (command.kind == "rotate" and command.params["value"] != 0)):
+                self._brace = None
+                if command.kind != "tachie":
+                    self._pose_override = self.avatar_frames.catalog.standing_pose
+                    target = self.controller.apply_command(Command("tachie", vars(self._pose_override)))
+                if self._fixed is not None:
+                    self._fixed = replace(self._fixed, source="指定构图")
             if command.kind == "tachie":
                 self._pose_override = target.pose
                 self._departure = None
@@ -672,6 +692,7 @@ class CanvasSource:
             return None
         catalog = self.avatar_frames.catalog
         seat = None
+        brace = None
         if command.kind == "sit":
             if scene is None:
                 return None
@@ -685,6 +706,14 @@ class CanvasSource:
             if seat is None:
                 return None
             fixed = seat.placement
+        elif command.kind == "brace":
+            entries = ((p, e) for p, e in catalog.entries.items()
+                       if e.wall_contact_px is not None and (requested_pose is None or p == requested_pose))
+            brace = wall_brace(frame, scene, entries, anchor, target_x=command.params.get("x"))
+            if brace is None:
+                return None
+            fixed, pose = brace.placement, brace.pose
+            self.avatar_frames.frame(pose)
         else:
             pose = state.pose if state.pose.torso == "半身歪斜向右" and state.pose.legs == "站着" else catalog.entry_pose
             if horizon is None:
@@ -700,6 +729,7 @@ class CanvasSource:
                 return self.controller.state_at()
             self._revision += 1
             self._fixed, self._seat, self._pose_override = fixed, seat, pose
+            self._brace = brace
             self._entrance = self._departure = None
             self._manual_layer = self._return_beside = False
             if anchor is not None and self._projection_anchor is None:
@@ -803,7 +833,8 @@ class CanvasSource:
             self._input_revision += 1
             request = self._input_revision
             override = self._pose_override
-            leaving_pose = self._fixed is not None and self._fixed.source in ("桌沿坐姿", "肩后探身")
+            leaving_pose = self._brace is not None or (
+                self._fixed is not None and self._fixed.source in ("桌沿坐姿", "肩后探身"))
             if leaving_pose:
                 override = None
         frame = camera.latest_frame()
@@ -842,6 +873,7 @@ class CanvasSource:
                 self._revision += 1
                 self._entrance = self._departure = None
                 self._seat = None
+                self._brace = None
                 if leaving_pose:
                     self._pose_override = None
                 if override is None and pose.torso == "半身歪斜向右" and placement.framing != "全身":
@@ -877,6 +909,7 @@ class CanvasSource:
             revision, alongside_height_ratio = self._revision, self._alongside_height_ratio
             anchor, manual_layer = self._projection_anchor, self._manual_layer
             seat = self._seat
+            brace = self._brace
             body_horizon = self._body_horizon
             override = self._pose_override
             return_beside = self._return_beside
@@ -1018,7 +1051,7 @@ class CanvasSource:
                 if scene.ground is not None and not manual_layer:
                     closer = scene.depth_visibility(fixed.x, fixed.y)
                     cover = scene.furniture_cover(fixed.x, fixed.y, closer)
-                    if state.camera_depth_mode != "alongside" or fixed.source in ("指定构图", "桌后站位"):
+                    if brace is not None or state.camera_depth_mode != "alongside" or fixed.source in ("指定构图", "桌后站位"):
                         person_cover = person_cover * closer
                 if scene.objects:
                     masks = (*masks, cover)
@@ -1026,6 +1059,8 @@ class CanvasSource:
         self._draw_sprite(canvas, self.avatar_frames.frame(state.pose), entry.anchor_px, fixed.x, fixed.y,
                           size / entry.standing_height_px, state.rotation, masks, arrival=arrival if presenting else 1.0)
         placement = {"x": fixed.x, "y": fixed.y, "scale": fixed.scale}
+        if brace is not None:
+            placement["wall_contact_xy"] = brace.contact_xy
         if scene is not None:
             placement.update(scene_objects=scene.descriptions, standing_height_ratio=round(fixed.standing_height_ratio, 4))
         if fixed.framing or state.camera_depth_mode != "alongside":
@@ -1183,8 +1218,9 @@ def dispatch_model_commands(
     mode_selection: ModeSelection | None = None,
     photo_capture: PhotoCapture | None = None,
     terminal: TerminalOutput | None = None,
-) -> None:
-    """Dispatch valid commands without mode-based action filtering."""
+    brace_missing: bool = False,
+) -> bool:
+    """Carry a failed wall placement across chunks of this response so its shutter can wait."""
     standalone = terminal is None
     if standalone:
         terminal = TerminalOutput()
@@ -1210,6 +1246,11 @@ def dispatch_model_commands(
                     event_log.record("session.mode_requested", mode=mode_selection.mode,
                                      changed=changed, co_photo_active=mode_selection.co_photo_active)
         elif command.kind == "capture":
+            if brace_missing:
+                terminal.line("[合照] 没找到可扶的位置，这张还没拍。")
+                if event_log is not None:
+                    event_log.record("command.skipped", command=asdict(command), reason="wall_contact_missing")
+                continue
             try:
                 if photo_capture is None:
                     raise RuntimeError("当前没有可用的摄像头画面")
@@ -1230,15 +1271,21 @@ def dispatch_model_commands(
                     reason="legacy_photo_entry_use_mode_tag",
                 )
         else:
+            wants_brace = command.kind == "brace" or (
+                command.kind == "tachie" and command.params.get("arm") in ("左手扶墙", "右手扶墙"))
+            if wants_brace:
+                brace_missing = True
             try:
                 target = canvas.apply_command(command)
-            except (TypeError, ValueError, RuntimeError) as exc:
+            except (OSError, TypeError, ValueError, RuntimeError) as exc:
                 if event_log is not None:
                     event_log.record(
                         "command.skipped", command=asdict(command), error=str(exc)
                     )
                 continue
             if target is not None:
+                if command.kind in {"brace", "stand", "follow", "peek", "sit", "teleport", "tachie"}:
+                    brace_missing = False
                 terminal.line(f"[canvas] {command.kind} {json.dumps(command.params, ensure_ascii=False)}")
                 if event_log is not None:
                     event_log.record(
@@ -1246,7 +1293,7 @@ def dispatch_model_commands(
                         command=asdict(command),
                         target=asdict(target),
                     )
-            elif command.kind in {"follow", "sit", "peek"}:
+            elif wants_brace or command.kind in {"follow", "sit", "peek"}:
                 terminal.line("[合照] 当前画面未找到符合要求的位置。")
                 if event_log is not None:
                     event_log.record("command.skipped", command=asdict(command), reason="no_scene_placement")
@@ -1254,6 +1301,7 @@ def dispatch_model_commands(
     emit_speech()
     if standalone:
         terminal.end_speech()
+    return brace_missing
 
 
 async def receive_realtime_outputs(
@@ -1278,6 +1326,7 @@ async def receive_realtime_outputs(
     requested_mode = None
     after_switch: list[Command] = []
     deferred_capture_seen = False
+    brace_missing = False
     while not stop_event.is_set():
         event = await session.recv()
         if event_log is not None:
@@ -1310,6 +1359,7 @@ async def receive_realtime_outputs(
                 requested_mode = None
                 after_switch.clear()
                 deferred_capture_seen = False
+                brace_missing = False
             previous_plain_count = parser.plain_speech_count
             commands = parser.feed(response_id, str(value))
             if event_log is not None:
@@ -1354,14 +1404,16 @@ async def receive_realtime_outputs(
                     after_switch.append(command)
                 else:
                     immediate.append(command)
-            dispatch_model_commands(immediate, canvas, speech_queue, event_log, verbose=verbose,
-                                    mode_selection=mode_selection, photo_capture=photo_capture, terminal=terminal)
+            brace_missing = dispatch_model_commands(
+                immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
+                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing)
         elif kind == "done":
             if response_id is not None and response_id != active_response_id:
                 continue
             parser.flush(response_id)
             terminal.end_speech()
             active_response_id = None
+            brace_missing = False
             if requested_mode is not None:
                 if mode_selection.select(requested_mode):
                     return requested_mode, after_switch

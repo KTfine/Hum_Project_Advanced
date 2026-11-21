@@ -2,6 +2,16 @@
 
 时区 Asia/Shanghai。只维护新基线及之后的变更；此前实验和协议不再作为当前依据。旧提交仍可从 [Git 历史](docs/archive/README.md) 追溯。
 
+## 2026-11-21 — 整理身旁站位代码
+
+自动入镜和“跟过来”共用的定位算法移至 [beside.py](photo_assistant/vision/beside.py)，清除了旧的 `shoulder_placement()` 入口及其全身探头分支。用户明确要求从肩后露脸时继续调用 [peek.py](photo_assistant/vision/peek.py)。
+
+## 2026-11-21 — 小白龙扶墙立绘
+
+合照时，小白龙微笑站立。墙在画面左侧时用 `arm=右手扶墙`，墙在画面右侧时用 `arm=左手扶墙`。[完整指令与两张立绘](models/avatars/README.md#小白龙立绘)
+
+合照现支持按场景定位扶墙。客户端结合墙边、可见墙脚、相对深度和两张图的掌缘标记安排站位。已在平视墙柱场景、镜像成片和四轮真实模型对话中核对接触与松手。[回放及验证结果](experiments/records/2026-11-21-wall-brace.md)
+
 ## 2026-11-21 — 当前版本与验证状态
 
 指导模式支持按现场画面给建议和到位提醒，合照模式支持肩后探头、移动到身边、坐桌沿与合成快门。平视场景实测发现，桌后的细桌腿有时会被裙摆覆盖。[版本说明](README.md) · [双模式实测](experiments/records/2026-11-21-product-trial.md)

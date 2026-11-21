@@ -1,4 +1,4 @@
-"""Stand next to a full-length person or peek beside a cropped foreground silhouette."""
+"""Find the companion's spot beside the subject on entry or a follow request."""
 
 from dataclasses import dataclass
 
@@ -7,7 +7,8 @@ import numpy as np
 
 from .head import FaceReference
 from .perspective import (
-    PersonReference, matched_standing_height_px, person_reference, silhouette_reference,
+    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, PersonReference,
+    matched_standing_height_px, person_reference, silhouette_reference,
     standing_height_px as project_height,
 )
 
@@ -17,12 +18,6 @@ class SidePlacement:
     x: float
     y: float
     scale: float
-
-
-# In the reference portrait the companion's cheeks are about 71% of the
-# person's width, with the companion's face center lower by 0.84 cheek widths.
-PORTRAIT_CHEEK_RATIO = 0.71
-PORTRAIT_FACE_DROP = 0.84
 
 
 def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height, reference,
@@ -287,16 +282,8 @@ def _compositions(reference, top, height, frame_height, torso_center):
             yield size, top + height * fraction - torso_center * size
 
 
-def _peek_compositions(reference, frame_height, head, size, face_y_offset, step):
-    """Place a peeking face slightly below the person's face."""
-    if reference is not None and not reference.estimated:
-        # Callers of shoulder_placement can specifically request the older full-length peek.
-        face_y = (head.center_y + 0.55 * head.width) / step
-        for setback in (0.12, 0.20, 0.28):
-            foot = (reference.foot_y - setback * reference.height) * frame_height
-            ideal_size = (face_y - foot) / face_y_offset if face_y_offset < 0 else size
-            yield float(np.clip(ideal_size, size * 0.97, size * 1.085)), foot
-        return
+def _portrait_compositions(head, size, face_y_offset, step):
+    """Keep the companion's calibrated face size while trying nearby shoulder heights."""
     for face_drop in (PORTRAIT_FACE_DROP, 0.65, 1.0, 0.42):
         face_y = (head.center_y + face_drop * head.width) / step
         yield size, face_y - face_y_offset * size
@@ -308,7 +295,7 @@ def side_placement(
     face_box_px: tuple[float, float, float, float] | None = None,
     head: FaceReference | None = None,
     preferred_x: float | None = None,
-    subject_reference: PersonReference | None = None, allow_pair: bool = True,
+    subject_reference: PersonReference | None = None,
     scene=None,
 ) -> SidePlacement | None:
     """Use adjacent floor space for full-body photos, and side occlusion for portraits."""
@@ -318,9 +305,11 @@ def side_placement(
             subject_x = head.center_x / width if head is not None else 0.5
             subject_y = head.center_y / height if head is not None else 0.95
             subject_reference = person_reference(person_mask, subject_x, subject_y)
-        if allow_pair and subject_reference is not None and not subject_reference.estimated:
+        if subject_reference is not None and not subject_reference.estimated:
             return _stand_beside(person_mask, foreground_masks, sprite_bgra, anchor_px, standing_height_px,
                                  subject_reference, face_box_px, head, preferred_x, scene)
+    else:
+        subject_reference = None
     if not foreground_masks:
         return None
     shape = foreground_masks[0].shape
@@ -345,9 +334,8 @@ def side_placement(
     torso_center = np.mean(art[1][1])
     rows, cols = cover.shape
     frame_height = shape[0] / step
-    measured_reference = None
-    if matched_height is not None:
-        measured_reference = subject_reference
+    portrait = matched_height is not None
+    if portrait:
         face_col = int(np.clip(round(head.center_x / step), 0, cols - 1))
         face_row = int(np.clip(round(head.center_y / step), 0, rows - 1))
     people = []
@@ -360,10 +348,10 @@ def side_placement(
             target = labels == label
             flank_top = _flank_top(target, top, height) if person else top
             center_x = (left + width / 2) * step / shape[1]
-            if matched_height is not None:
+            if portrait:
                 if person and not target[face_row, face_col]:
                     continue
-                reference = measured_reference
+                reference = subject_reference
                 if person:
                     flank_top = min(flank_top, (head.center_y + 0.85 * head.width) / step)
             elif person:
@@ -380,22 +368,20 @@ def side_placement(
                 if reference is None and people:
                     reference = min(people, key=lambda item: abs(item[0] - center_x))[1]
             best_score, placement = -np.inf, None
-            portrait = matched_height is not None and (reference is None or reference.estimated)
-            if matched_height is None:
-                options = _compositions(reference, top, height, frame_height, torso_center)
-            else:
-                size = portrait_height if portrait else matched_height
-                options = _peek_compositions(reference, frame_height, head, size / step, face_y_offset, step)
-                if portrait and reference is not None and scene is not None:
+            if portrait:
+                options = _portrait_compositions(head, portrait_height / step, face_y_offset, step)
+                if reference is not None and scene is not None:
                     # When the subject's shoes are far out of frame, a face-matched
                     # sprite can inadvertently show both feet halfway up a wall.
                     # Keep the calibrated body size and crop the shoe band instead.
-                    shoe_band = .10 * size / step
+                    shoe_band = .10 * portrait_height / step
                     if reference.foot_y * frame_height >= frame_height + shoe_band:
                         options = dict.fromkeys((size_at_y, max(foot, frame_height + shoe_band))
                                                 for size_at_y, foot in options)
+            else:
+                options = _compositions(reference, top, height, frame_height, torso_center)
             desired_x = None if preferred_x is None else preferred_x * shape[1] / step
-            subject_x = head.center_x / step if matched_height is not None else left + width / 2
+            subject_x = head.center_x / step if portrait else left + width / 2
             for order, (size, foot) in enumerate(options):
                 cropped = portrait or (reference is not None and reference.estimated and foot >= rows)
                 if reference is not None and reference.estimated and reference.foot_y > 1.25 and not cropped:
@@ -407,13 +393,13 @@ def side_placement(
                     continue
                 score, ax = result
                 score -= 0.018 * order
-                if matched_height is not None:
+                if portrait:
                     face_drop = ((foot + face_y_offset * size) * step - head.center_y) / head.width
-                    score -= 0.16 * abs(face_drop - (PORTRAIT_FACE_DROP if portrait else 0.42))
+                    score -= 0.16 * abs(face_drop - PORTRAIT_FACE_DROP)
                 if score <= best_score:
                     continue
                 x, y = float(ax * step / shape[1]), float(foot * step / shape[0])
-                ref = measured_reference if matched_height is not None else person_reference(person_mask, x, y)
+                ref = subject_reference if portrait else person_reference(person_mask, x, y)
                 if ref is not None and not portrait and y > ref.foot_y - 0.085 * ref.height:
                     continue
                 base = project_height(ref, shape[0], y, fallback_height=0.72 * shape[0],
@@ -424,11 +410,3 @@ def side_placement(
             if placement is not None:
                 return placement
     return None
-
-
-# Existing imports can still request entry behind the person directly.
-def shoulder_placement(person_mask, sprite_bgra, anchor_px, standing_height_px, *,
-                       foreground_masks=(), face_box_px=None, head=None):
-    masks = foreground_masks or (() if person_mask is None else (person_mask,))
-    return side_placement(person_mask, sprite_bgra, anchor_px, standing_height_px,
-                          foreground_masks=masks, face_box_px=face_box_px, head=head, allow_pair=False)

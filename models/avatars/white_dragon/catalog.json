@@ -65,6 +65,34 @@
       "anchor_px": [456, 1390],
       "seat_contact_px": [545, 843],
       "face_box_px": [461, 266, 621, 373]
+    },
+    {
+      "file": "wall-brace.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "左手扶墙",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1453,
+      "anchor_px": [510, 1573],
+      "wall_contact_px": [922, 415],
+      "face_box_px": [462, 286, 631, 412]
+    },
+    {
+      "file": "wall-brace-left.png",
+      "tags": {
+        "face": "微笑",
+        "hand": "无动作",
+        "arm": "右手扶墙",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1457,
+      "anchor_px": [441, 1577],
+      "wall_contact_px": [36, 425],
+      "face_box_px": [340, 285, 509, 413]
     }
   ]
 }

@@ -36,7 +36,8 @@ class StreamingCommandPromptTests(unittest.TestCase):
         self.assertNotIn('x=0.5', rendered)
 
     def test_co_photo_prompt_describes_teleport_and_pose_selection(self):
-        rendered = self.render_prompt(prompts.CO_PHOTO_COMMAND_PROMPT)
+        catalog = load_pose_catalog(DEFAULT_SPRITE_CATALOG)
+        rendered = self.render_prompt(prompts.CO_PHOTO_COMMAND_PROMPT, catalog=catalog)
         self.assertIn("当前任务：合照互动", rendered)
         self.assertIn("表情", rendered)
         context, actions = rendered.split("动作写法", 1)
@@ -54,7 +55,7 @@ class StreamingCommandPromptTests(unittest.TestCase):
         poses, rest = rest.split("画面调整", 1)
         adjustments, _ = rest.split("当前图库", 1)
         self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', movement)),
-                         {"stand", "follow", "peek", "sit", "teleport"})
+                         {"stand", "follow", "peek", "sit", "brace", "teleport"})
         self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', poses)), {"tachie"})
         self.assertIn("<layer:", adjustments)
         self.assertIn("<rotate:", adjustments)
@@ -62,13 +63,14 @@ class StreamingCommandPromptTests(unittest.TestCase):
             commands = StreamingCommandParser().feed("prompt", example)
             self.assertEqual(len(commands), 1, example)
             self.assertEqual(commands[0].params.keys(), SPRITE_OPTIONS.keys())
-        for values in SPRITE_OPTIONS.values():
-            for value in values:
-                self.assertIn(value, rendered)
+        for field in SPRITE_OPTIONS:
+            expected = {getattr(pose, field) for pose in catalog.entries}
+            values, = re.findall(rf'^{field} 可选 (.+)$', rendered, re.MULTILINE)
+            self.assertEqual(set(values.split("、")), expected)
         self.assertIn('x=0.5', rendered)
         self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {
             'speak', 'teleport', 'rotate', 'tachie', 'layer', 'blank', 'mode', 'capture', 'wait', 'follow',
-            'peek', 'sit', 'stand',
+            'peek', 'sit', 'brace', 'stand',
         })
 
     def test_live_scene_geometry_is_explained_only_in_co_photo(self):

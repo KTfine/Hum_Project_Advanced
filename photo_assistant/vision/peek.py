@@ -6,8 +6,7 @@ import numpy as np
 from .framing import Placement
 from .ground import projected_height
 from .head import measure_face
-from .perspective import matched_standing_height_px, person_reference
-from .shoulder import PORTRAIT_CHEEK_RATIO
+from .perspective import PORTRAIT_CHEEK_RATIO, matched_standing_height_px, person_reference
 
 
 # Fraction of projected opaque pixels below the face that the person should

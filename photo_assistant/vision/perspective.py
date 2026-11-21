@@ -6,6 +6,11 @@ import cv2
 import numpy as np
 
 
+# Half-body reference portrait: face width and vertical offset in human cheek widths.
+PORTRAIT_CHEEK_RATIO = 0.71
+PORTRAIT_FACE_DROP = 0.84
+
+
 @dataclass(frozen=True)
 class PersonReference:
     """Foot ordinate and crown-to-sole height, both in units of frame height."""

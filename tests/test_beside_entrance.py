@@ -1,4 +1,4 @@
-"""Exercise co-photo entry with real sprites over a known head-and-shoulders silhouette."""
+"""Exercise co-photo entry and preview timing with real sprites and fixed camera silhouettes."""
 
 import threading
 import unittest
@@ -12,7 +12,7 @@ from photo_assistant.client import CameraSource, CanvasSource, PersonOcclusion
 from photo_assistant.protocol import StreamingCommandParser
 
 
-class ShoulderEntranceTests(unittest.TestCase):
+class BesideEntranceTests(unittest.TestCase):
     def setUp(self):
         self.camera = Mock(spec=CameraSource)
         self.worker = Mock(spec=PersonOcclusion)
@@ -23,7 +23,7 @@ class ShoulderEntranceTests(unittest.TestCase):
         self.set_person(310)
         self.enter()
 
-    def set_person(self, center):
+    def set_person(self, center, *, closeup=False):
         mask = np.zeros((480, 640), np.float32)
         cv2.ellipse(mask, (center, 73), (23, 29), 0, 0, 360, 1, -1)
         cv2.rectangle(mask, (center - 11, 92), (center + 11, 118), 1, -1)
@@ -31,6 +31,11 @@ class ShoulderEntranceTests(unittest.TestCase):
                             (-9, 422), (0, 270), (9, 422), (34, 422), (37, 250),
                             (54, 233), (53, 119), (13, 108)])
         cv2.fillPoly(mask, [outline + (center, 0)], 1)
+        if closeup:
+            # Move the person closer to the fixed camera around the top of their head.
+            zoom = 1.7
+            transform = np.float32([[zoom, 0, center * (1 - zoom)], [0, zoom, 44 * (1 - zoom)]])
+            mask = cv2.warpAffine(mask, transform, (640, 480), flags=cv2.INTER_NEAREST)
         frame = np.full((480, 640, 3), (61, 67, 37), np.uint8)
         frame[mask == 1] = (77, 67, 109)
         self.frame, self.mask = frame, mask
@@ -43,14 +48,19 @@ class ShoulderEntranceTests(unittest.TestCase):
                                    entrance=self.canvas.entrance_state(self.camera))
 
     def test_api_frame_cannot_consume_the_first_visible_preview(self):
-        expected = self.canvas.render_preview_frame()
-        self.enter()
         # Exercise the preview-enabled policy without opening a desktop window.
         self.canvas.preview = True
-        self.canvas.latest_jpeg(self.frame)
-        self.send(AvatarPose(face="高冷表情").command())
-        np.testing.assert_array_equal(self.canvas.render_preview_frame(), expected)
-        self.assertFalse(np.array_equal(self.canvas.render_preview_frame(), expected))
+        with patch("photo_assistant.avatar.controller.time.monotonic", return_value=10.0) as clock:
+            self.canvas.latest_jpeg(self.frame)
+            self.send(AvatarPose(face="高冷表情").command())
+            sharp = self.canvas.render_capture_frame(self.frame)
+            clock.return_value = 13.0
+            first = self.canvas.render_preview_frame()
+            self.assertFalse(np.array_equal(first, self.frame))
+            self.assertFalse(np.array_equal(first, sharp))
+            clock.return_value = 14.0
+            np.testing.assert_array_equal(self.canvas.render_preview_frame(), sharp)
+            self.assertEqual(self.canvas.controller.state_at().pose.face, "高冷表情")
 
     def test_no_camera_shows_the_entry_pose_on_the_blank_canvas(self):
         self.canvas.configure_view(None, show_character=True, entrance=self.canvas.entrance_state(None))
@@ -61,44 +71,43 @@ class ShoulderEntranceTests(unittest.TestCase):
         for command in StreamingCommandParser().feed("response", text):
             self.canvas.apply_command(command)
 
-    def assert_peek_at(self, image, center):
-        delta = np.any(image != self.frame, axis=2)
-        # The real person's pixels are preserved. The visible sprite reaches
-        # the band beside the shoulder instead of just appearing near the feet.
-        self.assertFalse(np.any(delta & (self.mask == 1)))
-        left = delta[78:160, center - 100:center - 24].sum()
-        right = delta[78:160, center + 24:center + 100].sum()
-        self.assertGreater(max(left, right), 180)
-        self.assertEqual(self.canvas.controller.state_at().pose, AvatarPose(torso="半身歪斜向右"))
-        self.assertEqual(self.canvas.controller.state_at().layer_index, 0)
-
-    def test_wait_for_segmentation_and_reenter_at_new_shoulder_after_teleport(self):
+    def test_wait_for_segmentation_and_reenter_beside_person_after_teleport(self):
         self.worker.latest.return_value = None
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.frame)
         self.worker.latest.return_value = (self.frame, np.zeros_like(self.mask))
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.frame)
 
         self.worker.latest.return_value = (self.frame, self.mask)
-        peek = self.canvas.render_preview_frame()
-        self.assert_peek_at(peek, 310)
-        self.send("<layer:to,index=1>")
-        unobscured = self.canvas.render_preview_frame()
-        body_behind_person = np.any(unobscured != peek, axis=2) & (self.mask == 1)
-        self.assertGreater(body_behind_person[160:].sum(), 500)
+        self.canvas.render_preview_frame()
+        _, full = self.canvas.jpeg_with_placement(self.frame)
+        self.assertEqual(full["placement_source"], "并排站位")
+        self.assertEqual(self.canvas.controller.state_at().pose, self.canvas.avatar_frames.catalog.standing_pose)
+        self.assertAlmostEqual(full["y"] * 480, 422, delta=10)
+        self.assertGreater(abs(full["x"] * 640 - 310), 50)
 
         with patch("photo_assistant.avatar.controller.time.monotonic", return_value=0.0):
             self.send("<teleport:x=0.85,y=0.85>" + AvatarPose(face="高冷表情").command())
         moved = self.canvas.render_preview_frame()
-        self.assertFalse(np.array_equal(peek, moved))
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), moved)
         self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.85)
 
         self.canvas.configure_view(self.camera, show_character=False)
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.frame)
-        self.set_person(160)
+        self.set_person(160, closeup=True)
         self.enter()
-        self.assert_peek_at(self.canvas.render_preview_frame(), 160)
-        self.assertLess(self.canvas.controller.state_at().x, 0.45)
+        side = self.canvas.render_capture_frame(self.frame)
+        _, portrait = self.canvas.jpeg_with_placement(self.frame)
+        self.assertEqual(portrait["placement_source"], "自动侧探")
+        self.assertGreater(portrait["y"], 1.)
+        self.assertLess(portrait["x"], .5)
+        self.assertEqual(self.canvas.controller.state_at().pose, self.canvas.avatar_frames.catalog.entry_pose)
+        delta = np.any(side != self.frame, axis=2)
+        self.assertFalse(np.any(delta & (self.mask == 1)))
+        self.assertTrue(delta[60:265, :320].any())
+        self.send("<layer:to,index=1>")
+        in_front = self.canvas.render_capture_frame(self.frame)
+        changed_on_person = np.any(in_front != side, axis=2) & (self.mask == 1)
+        self.assertGreater(changed_on_person.sum(), 500)
 
     def test_explicit_teleport_supersedes_pending_entrance_and_keeps_pose(self):
         pose = AvatarPose(face="龇牙笑", legs="坐着")
