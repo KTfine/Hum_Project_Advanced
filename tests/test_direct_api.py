@@ -127,6 +127,24 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m["content"] for m in calls[1]],
                          ["guidance", "第一条要求", "换个姿势"])
 
+    async def test_readiness_question_after_camera_loss_clears_cached_image(self):
+        provider = AsyncMock()
+        provider.complete.return_value = SimpleNamespace(text="<speak:我现在看不到画面。>", metadata={})
+        session = DirectSession("co-photo", provider)
+        self.addAsyncCleanup(session.close)
+        session.submit_frame(b"\xff\xd8\xffA", placement={"avatar_visible": True})
+        question = "你就位了吗"
+        session.submit_frame(None, question, placement={"camera_frame_available": False, "avatar_visible": False})
+        await read_until(session, "response.done")
+
+        provider.complete.assert_awaited_once()
+        messages, = provider.complete.await_args.args
+        blocks = messages[-1]["content"]
+        self.assertEqual([block["type"] for block in blocks], ["text", "text"])
+        self.assertEqual(blocks[0]["text"], question)
+        self.assertIn("没有可用的摄像头画面", blocks[1]["text"])
+        self.assertEqual(session.handoff_messages()[0], {"role": "user", "content": question})
+
     async def test_cached_and_observed_frames_send_their_own_placement(self):
         requests = []
 

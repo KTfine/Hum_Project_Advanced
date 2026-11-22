@@ -86,6 +86,16 @@ class StreamingCommandPromptTests(unittest.TestCase):
         self.assertEqual(command.params["depth"], "far")
         self.assertNotIn("scale", command.params)
 
+    def test_camera_readiness_feedback_is_scoped_to_the_live_co_photo_prompt(self):
+        from experiments.scripts.hum_api.session import build_prompt
+
+        live = self.render_prompt(prompts.CO_PHOTO_COMMAND_PROMPT)
+        self.assertIn("固定机位", live)
+        self.assertIn("客户端会以你的口吻确认一次", live)
+        self.assertIn("对方主动问“你好了吗”", live)
+        for other_prompt in (self.render_prompt(), build_prompt("co-photo")):
+            self.assertNotIn("客户端会以你的口吻确认一次", other_prompt)
+
     def test_action_line_uses_a_complete_command_from_the_loaded_catalog(self):
         from experiments.scripts.hum_api.session import build_prompt
 

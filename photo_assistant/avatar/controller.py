@@ -51,6 +51,10 @@ class AvatarController:
         with self._lock:
             return self._state_at_unlocked(time.monotonic() if now is None else now)
 
+    def rotation_at_target(self, rendered_angle: float) -> bool:
+        with self._lock:
+            return rendered_angle == self._target.rotation
+
     def render_state(self, now: float | None = None) -> tuple[AvatarState, bool, float]:
         """Snapshot geometry including camera depth, automatic grounding and arrival progress."""
         with self._lock:

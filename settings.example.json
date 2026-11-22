@@ -1,4 +1,5 @@
 {
   "api_key": "",
-  "camera_name": ""
+  "camera_name": "",
+  "microphone": false
 }

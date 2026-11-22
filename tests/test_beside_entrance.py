@@ -67,6 +67,27 @@ class BesideEntranceTests(unittest.TestCase):
         self.assertEqual(self.canvas.controller.state_at().pose.torso, "半身歪斜向右")
         self.assertTrue((self.canvas.render_preview_frame() != 255).any())
 
+    def test_ready_frame_requires_finished_arrival_and_rotation_and_visible_pixels(self):
+        with patch("photo_assistant.avatar.controller.time.monotonic", return_value=10.0) as clock:
+            self.canvas.render_preview_frame()
+            _, entering = self.canvas.jpeg_with_placement(self.frame)
+            self.assertFalse(entering["pose_settled"])
+            clock.return_value = 11.0
+            self.send("<rotate:to,value=20,ms=1000>")
+            _, moving = self.canvas.jpeg_with_placement(self.frame)
+            self.assertFalse(moving["pose_settled"])
+            clock.return_value = 12.0
+            _, ready = self.canvas.jpeg_with_placement(self.frame)
+            self.assertTrue(ready["pose_settled"] and ready["avatar_visible"])
+            self.worker.latest.return_value = (self.frame, np.ones_like(self.mask))
+            _, hidden = self.canvas.jpeg_with_placement(self.frame)
+            self.assertFalse(hidden["avatar_visible"])
+            self.send("<teleport:x=-2,y=-2>")
+            clock.return_value = 13.0
+            self.worker.latest.return_value = (self.frame, self.mask)
+            _, outside = self.canvas.jpeg_with_placement(self.frame)
+            self.assertFalse(outside["avatar_visible"])
+
     def send(self, text):
         for command in StreamingCommandParser().feed("response", text):
             self.canvas.apply_command(command)

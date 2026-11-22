@@ -1,7 +1,8 @@
 param(
     [string]$Python = '',
     [int]$CameraDevice,
-    [string]$PersonaFile
+    [string]$PersonaFile,
+    [switch]$Microphone
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -14,5 +15,8 @@ $env:PYTHONIOENCODING = 'utf-8'
 $clientArguments = @('--log-file', $clientLog)
 if ($PSBoundParameters.ContainsKey('CameraDevice')) { $clientArguments += @('--camera-device', $CameraDevice) }
 if ($PSBoundParameters.ContainsKey('PersonaFile')) { $clientArguments += @('--character-persona-file', $PersonaFile) }
+if ($PSBoundParameters.ContainsKey('Microphone')) {
+    if ($Microphone) { $clientArguments += '--microphone' } else { $clientArguments += '--no-microphone' }
+}
 & $Python (Join-Path $projectRoot 'realtime_av_test.py') @clientArguments
 exit $LASTEXITCODE

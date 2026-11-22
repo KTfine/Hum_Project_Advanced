@@ -78,6 +78,8 @@ class DirectSession:
             raise RuntimeError("Photo session is closed")
         if jpeg is not None:
             self._latest_frame = (jpeg, None if placement is None else placement.copy())
+        elif placement is not None and placement.get("camera_frame_available") is False:
+            self._latest_frame = None
         human_turn = bool(text and text.strip())
         if human_turn:
             if self._managed_observations:
@@ -116,6 +118,8 @@ class DirectSession:
                 return
 
         content = text
+        if self._latest_frame is None and placement is not None and placement.get("camera_frame_available") is False:
+            content = [{"type": "text", "text": text}, {"type": "text", "text": "当前没有可用的摄像头画面，无法确认是否就位。"}]
         if self._latest_frame is not None:
             image, frame_placement = self._latest_frame
             content = [{"type": "text", "text": text}, Image(image).block()]

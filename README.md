@@ -16,7 +16,8 @@
 ```json
 {
   "api_key": "",
-  "camera_name": "2K USB Camera"
+  "camera_name": "2K USB Camera",
+  "microphone": false
 }
 ```
 
@@ -35,6 +36,8 @@ python -m venv .venv-client
 也可以在 VS Code 中选择刚建好的 Python 解释器，打开 `realtime_av_test.py`，点右上角 **Run Python File ▶**。默认角色是小白龙。要体验原有的 90 张 Vita 立绘，可用 `python realtime_av_test.py --sprite-catalog models/avatars/vita/catalog.json`。[素材格式和添加步骤](models/avatars/README.md)
 
 在终端输入“我想拍一张显得有活力的照片”并按 Enter，模型会结合当前画面回复。想进入合照可输入“和我一起合照吧”，返回时输入“继续指导我摆姿势”。客户端收到模型生成的模式标签后切换提示词和预览。在预览窗口按 Q 或在终端按 Ctrl+C 退出。
+
+安装语音依赖和 Vosk 中文模型后，运行 `python realtime_av_test.py --microphone` 可开启普通话听写。看到 `[mic]` 就绪提示后，说“现在拍一张”并稍作停顿，助手会显示识别文字并自动提交。要让 ▶ 默认开启听写，将上面的 `microphone` 设为 `true`。[一次性安装与麦克风设置](docs/reference/client-cli.md#麦克风听写)
 
 想拍半身合照，可以在合照模式输入“靠近镜头一点，和我拍张半身照”。角色可以传送到脚点位于下边框外的位置，让下半身自然出框。预览满意后，输入“现在帮我拍一张”并按 Enter。程序将照片保存为项目 `photos/` 目录下的 PNG。指导模式保存摄像头原图，合照模式将实景与角色一起保存。入场和换位光效仅在预览中显示。
 

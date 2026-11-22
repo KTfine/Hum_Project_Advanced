@@ -2,6 +2,14 @@
 
 时区 Asia/Shanghai。只维护新基线及之后的变更；此前实验和协议不再作为当前依据。旧提交仍可从 [Git 历史](docs/archive/README.md) 追溯。
 
+## 2026-11-22 — 普通话麦克风输入
+
+运行 `python realtime_av_test.py --microphone` 或给启动脚本加上 `-Microphone`，可使用 Vosk 在本机转写普通话。每句完成后，拍照助手会显示文字并提交到当前会话。已核对默认麦克风打开与释放，并用三段指令录音验证回放和提交。[使用说明](docs/reference/client-cli.md#麦克风听写) · [识别结果](experiments/records/2026-11-22-microphone.md)
+
+## 2026-11-22 — 合照角色就位确认
+
+角色实际入画或按要求换好位置、摆好姿势后，客户端在终端用角色口吻确认一次。用户追问时，角色可以参考最新画面、当前立绘以及上次动作的执行结果。离线回归覆盖了持续等待、连续动作、画面中断和角色被遮挡的情况。[验证记录](experiments/records/2026-11-22-co-photo-readiness.md)
+
 ## 2026-11-21 — 整理身旁站位代码
 
 自动入镜和“跟过来”共用的定位算法移至 [beside.py](photo_assistant/vision/beside.py)，清除了旧的 `shoulder_placement()` 入口及其全身探头分支。用户明确要求从肩后露脸时继续调用 [peek.py](photo_assistant/vision/peek.py)。

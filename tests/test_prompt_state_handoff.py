@@ -110,7 +110,10 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
             frame = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
             if index == 1:
                 self.assertGreater(float(frame.mean()), 1)
-                self.assertEqual(socket.placements[0], {"x": 0.4, "y": 0.8, "scale": 1.0})
+                placement = socket.placements[0]
+                self.assertEqual((placement["x"], placement["y"], placement["scale"]), (0.4, 0.8, 1.0))
+                self.assertTrue(placement["avatar_visible"])
+                self.assertIn("current_tachie", placement)
             else:
                 self.assertTrue(np.all(frame == 0))
                 self.assertIsNone(socket.placements[0])
@@ -136,6 +139,31 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         for path, expected in zip(paths, (raw, half_portrait, raw)):
             frame = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
             np.testing.assert_array_equal(frame, expected)
+
+    async def test_ready_cue_follows_entry_and_the_last_streamed_action_once(self):
+        guidance = Session([text("<mode:co-photo>"), {"type": "response.done", "response_id": "r"}])
+        co_photo = Session([])
+        guidance.emits_response_done = co_photo.emits_response_done = True
+        cue_counts = []
+
+        def on_frame(jpeg, user_text, *, placement=None):
+            cue_counts.append(sum(row.get("source") == "co_photo_ready" for row in self.log.rows))
+            if len(cue_counts) == 2:
+                co_photo.incoming.put_nowait(text("<teleport:x=0.3,y=0.8>"))
+            elif len(cue_counts) == 3:
+                co_photo.incoming.put_nowait(text("<rotate:to,value=15,ms=0>"))
+                co_photo.incoming.put_nowait({"type": "response.done", "response_id": "r"})
+            elif len(cue_counts) == 5:
+                co_photo.incoming.put_nowait({"type": "session.closed"})
+
+        co_photo.submit_frame = on_frame
+        with (patch.object(client.direct_api, "open_session", side_effect=[guidance, co_photo]),
+              contextlib.redirect_stdout(io.StringIO())):
+            await asyncio.wait_for(client.run_realtime_sessions(
+                "test-key", self.canvas, self.camera, client.SpeechQueue(), self.stop, self.args,
+                event_log=self.log, mode_selection=self.selection,
+            ), timeout=10)
+        self.assertEqual(cue_counts, [0, 1, 1, 2, 2])
 
     async def test_mode_tag_alone_places_real_sprite_beside_full_body_before_first_capture(self):
         frame = self.camera.latest_frame()

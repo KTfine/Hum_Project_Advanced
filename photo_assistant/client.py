@@ -30,6 +30,8 @@ from .paths import PROJECT_ROOT
 from .persona import add_persona_options, load_persona_option
 from .prompts import CO_PHOTO_COMMAND_PROMPT, LIVE_ENTRY_CONTEXT, PHOTO_GUIDANCE_PROMPT, character_name_for
 from .protocol import CHARACTER_ACTIONS, Command, StreamingCommandParser
+from .readiness import CoPhotoReadiness
+from .voice_input import recognize_microphone
 from .vision.beside import side_placement
 from .vision.camera import open_camera
 from .vision.framing import DepartureWatch, Placement
@@ -116,6 +118,21 @@ class ConsoleTextInput:
     def acknowledge(self, text: str) -> None:
         if self.pending and self.pending[0] == text:
             self.pending.popleft()
+
+    async def run_microphone(self, stop_event: threading.Event) -> None:
+        def on_text(text: str) -> None:
+            text = text.strip()
+            if text and not stop_event.is_set():
+                self.put(text)
+                self.terminal.line(f"[mic] {text}")
+
+        def on_status(message: str) -> None:
+            self.terminal.line(f"[mic] {message}")
+
+        try:
+            await recognize_microphone(stop_event, on_text, on_status)
+        except Exception as exc:
+            on_status(f"麦克风识别中断，可继续打字。{exc}")
 
     def _accept_text(self, text: str, *, final: bool = False) -> None:
         self._line += text
@@ -311,8 +328,8 @@ class ModeSelection:
 def alpha_composite_at(
     canvas: np.ndarray, avatar: np.ndarray, left: int, top: int,
     *foreground_masks: np.ndarray,
-) -> None:
-    """Alpha-composite a BGRA avatar onto a BGR canvas, clipping at its edges."""
+) -> bool:
+    """Composite the avatar and report whether any of it survives clipping and occlusion."""
     import cv2
 
     if canvas.ndim != 3 or canvas.shape[2] != 3:
@@ -327,7 +344,7 @@ def alpha_composite_at(
     dst_right = min(canvas_w, left + avatar_w)
     dst_bottom = min(canvas_h, top + avatar_h)
     if dst_left >= dst_right or dst_top >= dst_bottom:
-        return
+        return False
 
     src_left = dst_left - left
     src_top = dst_top - top
@@ -344,6 +361,7 @@ def alpha_composite_at(
         alpha *= 1.0 - covered
     foreground = cv2.cvtColor(source, cv2.COLOR_BGRA2BGR)
     cv2.blendLinear(destination, foreground, 1.0 - alpha, alpha, dst=destination)
+    return bool(np.any(alpha >= 1 / 255))
 
 
 class CameraSource:
@@ -1056,8 +1074,9 @@ class CanvasSource:
                 if scene.objects:
                     masks = (*masks, cover)
             masks = tuple(person_cover if mask is person else mask for mask in masks)
-        self._draw_sprite(canvas, self.avatar_frames.frame(state.pose), entry.anchor_px, fixed.x, fixed.y,
-                          size / entry.standing_height_px, state.rotation, masks, arrival=arrival if presenting else 1.0)
+        visible = self._draw_sprite(canvas, self.avatar_frames.frame(state.pose), entry.anchor_px,
+                                    fixed.x, fixed.y, size / entry.standing_height_px, state.rotation,
+                                    masks, arrival=arrival if presenting else 1.0)
         placement = {"x": fixed.x, "y": fixed.y, "scale": fixed.scale}
         if brace is not None:
             placement["wall_contact_xy"] = brace.contact_xy
@@ -1069,12 +1088,16 @@ class CanvasSource:
             placement["placement_source"] = fixed.source
         if fixed.framing:
             placement["person_framing"] = fixed.framing
-        if composing and fixed.source:
-            placement["current_tachie"] = state.pose.command()
+        if composing:
+            with self._placement_lock:
+                settled = (revision == self._revision and controller is self.controller and arrival >= 1
+                           and controller.rotation_at_target(state.rotation))
+            placement.update(current_tachie=state.pose.command(), avatar_visible=visible,
+                             pose_settled=settled, rotation=state.rotation, layer_index=state.layer_index)
         return canvas, placement
 
     @staticmethod
-    def _draw_sprite(canvas, source, anchor, x, y, scale, rotation, masks, *, arrival=1.0) -> None:
+    def _draw_sprite(canvas, source, anchor, x, y, scale, rotation, masks, *, arrival=1.0) -> bool:
         """Map the sprite's ground point to the camera and warp only its visible area."""
         import cv2
 
@@ -1090,12 +1113,12 @@ class CanvasSource:
         top = max(0, math.floor(projected[:, 1].min()))
         bottom = min(height, math.ceil(projected[:, 1].max()))
         if right <= left or bottom <= top:
-            return
+            return False
         matrix[:, 2] -= (left, top)
         sprite = cv2.warpAffine(source, matrix, (right - left, bottom - top))
         if arrival < 1.0:
             sprite = apply_teleport_effect(sprite, arrival)
-        alpha_composite_at(canvas, sprite, left, top, *masks)
+        return alpha_composite_at(canvas, sprite, left, top, *masks)
 
     def latest_jpeg(
         self, camera_frame: np.ndarray | None = None, *, include_character: bool = True
@@ -1168,6 +1191,7 @@ async def send_realtime_inputs(
     *, event_log: FrontendEventLogger | None = None, include_character: bool = True,
     text_input: ConsoleTextInput | None = None, report_placement: bool = False,
     observation_requires_camera: bool = False,
+    readiness: CoPhotoReadiness | None = None,
     terminal: TerminalOutput | None = None,
 ) -> None:
     """Keep the current frame available and deliver each user input exactly once."""
@@ -1185,17 +1209,35 @@ async def send_realtime_inputs(
         if report_placement and camera is not None:
             placed = placement is not None and placement.get("avatar_visible", True)
             if placed:
-                status, message = "placed", "角色已在画面中定位。"
+                status, message = "placed", None
                 entry_hint_after = time.monotonic() + 3
             elif frame is None:
                 status, message = "waiting_for_camera", "正在等待摄像头画面。"
+            elif placement and "x" in placement:
+                status, message = "out_of_view", "当前合照画面中看不到角色。"
             else:
                 status, message = "waiting_for_placement", "正在寻找合照位置。可以在身旁留一块空位。"
             if status != entry_status and (placed or time.monotonic() >= entry_hint_after):
-                terminal.line(f"[合照] {message}")
+                if message:
+                    terminal.line(f"[合照] {message}")
                 if event_log is not None:
                     event_log.record("canvas.entry", status=status, placement=placement)
                 entry_status = status
+        if readiness is not None:
+            if text is not None:
+                readiness.begin_turn()
+            else:
+                message = readiness.observe(placement)
+                if message:
+                    terminal.end_speech()
+                    terminal.speech(message)
+                    terminal.end_speech()
+                    if event_log is not None:
+                        event_log.record("speak", text=message, source="co_photo_ready")
+            if placement is None:
+                placement = {"camera_frame_available": frame is not None, "avatar_visible": False}
+            if readiness.last_action_succeeded is not None:
+                placement["last_action_succeeded"] = readiness.last_action_succeeded
         if report_placement and placement is not None:
             session.submit_frame(jpeg, text, placement=placement)
         else:
@@ -1219,6 +1261,7 @@ def dispatch_model_commands(
     photo_capture: PhotoCapture | None = None,
     terminal: TerminalOutput | None = None,
     brace_missing: bool = False,
+    readiness: CoPhotoReadiness | None = None,
 ) -> bool:
     """Carry a failed wall placement across chunks of this response so its shutter can wait."""
     standalone = terminal is None
@@ -1278,11 +1321,15 @@ def dispatch_model_commands(
             try:
                 target = canvas.apply_command(command)
             except (OSError, TypeError, ValueError, RuntimeError) as exc:
+                if readiness is not None:
+                    readiness.action_result(command.kind, applied=False)
                 if event_log is not None:
                     event_log.record(
                         "command.skipped", command=asdict(command), error=str(exc)
                     )
                 continue
+            if readiness is not None:
+                readiness.action_result(command.kind, applied=target is not None)
             if target is not None:
                 if command.kind in {"brace", "stand", "follow", "peek", "sit", "teleport", "tachie"}:
                     brace_missing = False
@@ -1315,6 +1362,7 @@ async def receive_realtime_outputs(
     mode_selection: ModeSelection | None = None,
     photo_capture: PhotoCapture | None = None,
     terminal: TerminalOutput | None = None,
+    readiness: CoPhotoReadiness | None = None,
 ) -> tuple[str, list[Command]] | None:
     """Consume the turn, returning any actions that need a newly selected view."""
     if terminal is None:
@@ -1339,6 +1387,8 @@ async def receive_realtime_outputs(
             if interrupted_id is not None:
                 interrupted_response_ids.add(interrupted_id)
             if interrupted_id == active_response_id:
+                if readiness is not None:
+                    readiness.cancel_turn()
                 parser.flush()
                 active_response_id = None
                 requested_mode = None
@@ -1354,6 +1404,8 @@ async def receive_realtime_outputs(
 
         if kind == "text":
             if response_id != active_response_id:
+                if readiness is not None and event.get("turn_source") != "observation":
+                    readiness.begin_turn()
                 terminal.end_speech()
                 active_response_id = response_id
                 requested_mode = None
@@ -1406,7 +1458,7 @@ async def receive_realtime_outputs(
                     immediate.append(command)
             brace_missing = dispatch_model_commands(
                 immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
-                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing)
+                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness)
         elif kind == "done":
             if response_id is not None and response_id != active_response_id:
                 continue
@@ -1419,9 +1471,11 @@ async def receive_realtime_outputs(
                     return requested_mode, after_switch
                 # Multiple tags can resolve back to the already loaded mode.
                 dispatch_model_commands(after_switch, canvas, speech_queue, event_log,
-                                        verbose=verbose, photo_capture=photo_capture, terminal=terminal)
+                                        verbose=verbose, photo_capture=photo_capture, terminal=terminal, readiness=readiness)
                 requested_mode = None
                 after_switch.clear()
+            if readiness is not None:
+                readiness.finish_turn()
         elif kind == "closed":
             terminal.line(f"[session] closed: {value}")
             stop_event.set()
@@ -1499,6 +1553,7 @@ async def run_realtime_sessions(
                 switched = True
                 continue
             canvas.configure_view(camera, show_character=include_character, entrance=entrance)
+            readiness = CoPhotoReadiness() if mode == "co-photo" and camera is not None and not args.prompt else None
             photo_capture = PhotoCapture(camera, PROJECT_ROOT / "photos",
                                         character_canvas=canvas if include_character else None)
             terminal.line(f"[session] created: {session.session_id}")
@@ -1516,19 +1571,25 @@ async def run_realtime_sessions(
                 target_mode, commands = queued_for_view
                 if mode == target_mode:
                     dispatch_model_commands(commands, canvas, speech_queue, event_log,
-                                            verbose=args.verbose, photo_capture=photo_capture, terminal=terminal)
+                                            verbose=args.verbose, photo_capture=photo_capture, terminal=terminal,
+                                            readiness=readiness)
+                    if readiness is not None:
+                        readiness.finish_turn()
                 queued_for_view = None
+            if readiness is not None and handoff_messages and pending_observation:
+                # A follow-up for the same invitation may still supply its requested pose.
+                readiness.begin_turn()
             sender = asyncio.create_task(send_realtime_inputs(
                 session, canvas, camera, stop_event, event_log=event_log,
                 include_character=include_character,
                 text_input=text_input, report_placement=mode == "co-photo" and not args.prompt,
                 observation_requires_camera=not args.prompt,
-                terminal=terminal,
+                terminal=terminal, readiness=readiness,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 session, stop_event, canvas, speech_queue, verbose=args.verbose,
                 event_log=event_log, mode_selection=None if args.prompt else selection,
-                photo_capture=photo_capture, terminal=terminal,
+                photo_capture=photo_capture, terminal=terminal, readiness=readiness,
             ), name="realtime-receiver")
             tasks.extend([sender, receiver])
             switch = asyncio.create_task(wait_for_mode_change(selection, revision, stop_event))
@@ -1576,6 +1637,10 @@ async def run_probe(
     args: argparse.Namespace, event_log: FrontendEventLogger | None = None
 ) -> None:
     api_key = read_api_key()
+    settings = read_project_settings()
+    microphone = args.microphone if args.microphone is not None else settings.get("microphone", False)
+    if not isinstance(microphone, bool):
+        raise ValueError("settings.json 中的 microphone 必须为 true 或 false。")
     stop_event = threading.Event()
     occlusion = None if args.no_camera else PersonOcclusion(SceneSegmenter)
     canvas = CanvasSource(
@@ -1593,7 +1658,7 @@ async def run_probe(
     if not args.no_camera:
         name = None
         if sys.platform == "win32" and args.camera_device is None:
-            name = read_project_settings().get("camera_name", "")
+            name = settings.get("camera_name", "")
             if not isinstance(name, str):
                 raise ValueError("settings.json 中的 camera_name 必须是摄像头名称字符串。")
             name = name.strip() or None
@@ -1602,7 +1667,7 @@ async def run_probe(
     canvas.configure_view(camera, show_character=False)
     speech_queue = SpeechQueue()
     text_input = ConsoleTextInput()
-    input_task = None
+    input_tasks = []
     try:
         if camera is not None:
             camera.start()
@@ -1621,16 +1686,18 @@ async def run_probe(
         print(f"[camera] {camera.display_label if camera else 'disabled'}", flush=True)
         print("[controls] press Q in the preview or Ctrl+C to stop", flush=True)
         print("[input] type a goal, correction, or mode request and press Enter", flush=True)
-        input_task = asyncio.create_task(text_input.run(stop_event))
+        input_tasks.append(asyncio.create_task(text_input.run(stop_event)))
+        if microphone:
+            input_tasks.append(asyncio.create_task(text_input.run_microphone(stop_event)))
         await run_realtime_sessions(
             api_key, canvas, camera, speech_queue, stop_event, args,
             event_log=event_log, text_input=text_input,
         )
     finally:
         stop_event.set()
-        if input_task is not None:
-            input_task.cancel()
-            await asyncio.gather(input_task, return_exceptions=True)
+        for task in input_tasks:
+            task.cancel()
+        await asyncio.gather(*input_tasks, return_exceptions=True)
         canvas.close()
         if camera is not None:
             camera.close()
@@ -1668,6 +1735,10 @@ def parse_args(argv=None, *, default_catalog: Path = DEFAULT_SPRITE_CATALOG) -> 
         help="send a blank frame in guidance, or the character canvas in co-photo/custom",
     )
     parser.add_argument("--no-preview", action="store_true", help="hide canvas preview")
+    parser.add_argument(
+        "--microphone", action=argparse.BooleanOptionalAction, default=None,
+        help="use offline Mandarin speech recognition with Vosk alongside typed input (default: microphone in settings.json, or off)",
+    )
     parser.add_argument("--verbose", action="store_true", help="print API response metadata and blank commands")
     parser.add_argument(
         "--log-file",
