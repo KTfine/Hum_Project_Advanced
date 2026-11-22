@@ -650,19 +650,14 @@ class CanvasSource:
             self._thread = threading.Thread(target=self._preview_loop, name="canvas-preview", daemon=True)
             self._thread.start()
 
-    def apply_expression(self, command: Command) -> AvatarState | None:
-        """Change only the face on a visible pose, preserving its placement and entry behavior."""
-        if command.kind != "tachie":
-            raise ValueError("表情切换需要 tachie 指令")
-        pose = AvatarPose.from_tags(command.params)
+    def _apply_face_change(self, command: Command, pose: AvatarPose) -> AvatarState | None:
+        """Keep the current placement when switching between matching facial variants."""
         with self._placement_lock:
             if not self._show_character or self._entrance is not None or self.controller is None:
                 return None
             state = self.controller.state_at()
-            if replace(state.pose, face=pose.face) != pose:
+            if state.pose.face == pose.face or replace(state.pose, face=pose.face) != pose:
                 return None
-            if state.pose == pose:
-                return state
             catalog = self.avatar_frames.catalog
             target = catalog.entry(pose)
             if self._seat is not None or self._brace is not None:
@@ -671,13 +666,13 @@ class CanvasSource:
                 if (current.anchor_px != target.anchor_px or current.standing_height_px != target.standing_height_px
                         or getattr(current, contact) != getattr(target, contact)):
                     return None
-            self.avatar_frames.frame(pose)
             state = self.controller.apply_command(command)
             if self._pose_override is not None:
                 self._pose_override = pose
             if self._brace is not None:
                 self._brace = replace(self._brace, pose=pose)
             self._revision += 1
+            self._input_revision += 1
             return state
 
     def apply_command(self, command: Command) -> AvatarState | None:
@@ -698,6 +693,10 @@ class CanvasSource:
                 self.avatar_frames.frame(pose)
             except OSError as exc:
                 raise ValueError(f"无法读取立绘：{exc}") from exc
+            # A face variant with matching geometry can keep its existing support.
+            expression = self._apply_face_change(command, pose)
+            if expression is not None:
+                return expression
             if (self._project_scene and self._show_character
                     and self.avatar_frames.catalog.entry(pose).wall_contact_px is not None):
                 with self._placement_lock:
@@ -1311,7 +1310,6 @@ async def send_realtime_inputs(
                 ready_event = readiness.observe(placement)
                 if ready_event is not None:
                     placement["readiness_event"] = ready_event
-                    terminal.line("[合照] 角色已就位。")
                     if event_log is not None:
                         event_log.record("canvas.ready", reason=ready_event)
             if placement is None:
@@ -1366,19 +1364,26 @@ def dispatch_model_commands(
     brace_missing: bool = False,
     readiness: CoPhotoReadiness | None = None,
     speech_already_streamed: bool = False,
+    response_id: str | None = None,
+    turn_source: str | None = None,
 ) -> bool:
     """Carry a failed wall placement across chunks of this response so its shutter can wait."""
     standalone = terminal is None
     if standalone:
         terminal = TerminalOutput()
 
+    def record(event, **fields):
+        if event_log is not None:
+            if turn_source == "observation":
+                fields.update(response_id=response_id, turn_source=turn_source)
+            event_log.record(event, **fields)
+
     def emit_speech():
         for text in iter(speech_queue.pop_next, None):
             terminal.speech(text)
             if not speech_already_streamed:
                 speech_queue.read_aloud(text, final=True)
-            if event_log is not None:
-                event_log.record("speak", text=text)
+            record("speak", text=text)
 
     for command in commands:
         if command.kind == "speak":
@@ -1391,14 +1396,12 @@ def dispatch_model_commands(
         elif command.kind == "mode":
             if mode_selection is not None:
                 changed = mode_selection.select(str(command.params["mode"]))
-                if event_log is not None:
-                    event_log.record("session.mode_requested", mode=mode_selection.mode,
-                                     changed=changed, co_photo_active=mode_selection.co_photo_active)
+                record("session.mode_requested", mode=mode_selection.mode,
+                       changed=changed, co_photo_active=mode_selection.co_photo_active)
         elif command.kind == "capture":
             if brace_missing:
                 terminal.line("[合照] 没找到可扶的位置，这张还没拍。")
-                if event_log is not None:
-                    event_log.record("command.skipped", command=asdict(command), reason="wall_contact_missing")
+                record("command.skipped", command=asdict(command), reason="wall_contact_missing")
                 continue
             try:
                 if photo_capture is None:
@@ -1406,19 +1409,13 @@ def dispatch_model_commands(
                 path = photo_capture.save()
             except (OSError, RuntimeError) as exc:
                 terminal.line(f"[photo] 拍照失败：{exc}")
-                if event_log is not None:
-                    event_log.record("command.skipped", command=asdict(command), error=str(exc))
+                record("command.skipped", command=asdict(command), error=str(exc))
             else:
                 terminal.line(f"[photo] {path}")
-                if event_log is not None:
-                    event_log.record("photo.saved", path=str(path))
+                record("photo.saved", path=str(path))
         elif command.kind == "photo":
             # Old recordings remain parseable; mode tags now select prompts.
-            if event_log is not None:
-                event_log.record(
-                    "command.skipped", command=asdict(command),
-                    reason="legacy_photo_entry_use_mode_tag",
-                )
+            record("command.skipped", command=asdict(command), reason="legacy_photo_entry_use_mode_tag")
         else:
             wants_brace = command.kind == "brace" or (
                 command.kind == "tachie" and command.params.get("arm") in ("左手扶墙", "右手扶墙"))
@@ -1429,10 +1426,7 @@ def dispatch_model_commands(
             except (OSError, TypeError, ValueError, RuntimeError) as exc:
                 if readiness is not None:
                     readiness.action_result(command.kind, applied=False)
-                if event_log is not None:
-                    event_log.record(
-                        "command.skipped", command=asdict(command), error=str(exc)
-                    )
+                record("command.skipped", command=asdict(command), error=str(exc))
                 continue
             if readiness is not None:
                 readiness.action_result(command.kind, applied=target is not None)
@@ -1441,15 +1435,10 @@ def dispatch_model_commands(
                     brace_missing = False
                 terminal.line(f"[canvas] {command.kind} {json.dumps(command.params, ensure_ascii=False)}")
                 if event_log is not None:
-                    event_log.record(
-                        "command.applied",
-                        command=asdict(command),
-                        target=asdict(target),
-                    )
+                    record("command.applied", command=asdict(command), target=asdict(target))
             elif wants_brace or command.kind in {"follow", "sit", "peek"}:
                 terminal.line("[合照] 当前画面未找到符合要求的位置。")
-                if event_log is not None:
-                    event_log.record("command.skipped", command=asdict(command), reason="no_scene_placement")
+                record("command.skipped", command=asdict(command), reason="no_scene_placement")
 
     emit_speech()
     if standalone:
@@ -1486,27 +1475,6 @@ async def receive_realtime_outputs(
     after_switch: list[Command] = []
     brace_missing = False
 
-    def observation_action(command):
-        if command.kind != "tachie" or mode_selection is None or not mode_selection.co_photo_active:
-            reason = "observation_feedback_only"
-        elif readiness is not None and readiness.pending_action:
-            reason = "user_placement_pending"
-        else:
-            try:
-                target = canvas.apply_expression(command)
-            except (OSError, TypeError, ValueError, RuntimeError) as exc:
-                reason = str(exc)
-            else:
-                if target is not None:
-                    if event_log is not None:
-                        event_log.record("command.applied", command=asdict(command), target=asdict(target),
-                                         response_id=active_response_id, turn_source="observation")
-                    return
-                reason = "expression_requires_current_pose"
-        if event_log is not None:
-            event_log.record("command.skipped", command=asdict(command), reason=reason,
-                             response_id=active_response_id, turn_source="observation")
-
     while not stop_event.is_set():
         event = await session.recv()
         if event_log is not None:
@@ -1525,7 +1493,7 @@ async def receive_realtime_outputs(
             if interrupted_id is not None:
                 retired_responses.append(interrupted_id)
             if interrupted_id == active_response_id:
-                if readiness is not None and source != "observation":
+                if readiness is not None:
                     readiness.cancel_turn()
                 speech_queue.read_aloud(None)
                 parser.flush()
@@ -1572,18 +1540,13 @@ async def receive_realtime_outputs(
                                      response_id=response_id, turn_source=active_source)
             immediate = []
             for command in commands:
-                if active_source == "observation":
-                    if command.kind in {"speak", "blank"}:
-                        dispatch_model_commands([command], canvas, speech_queue, event_log, verbose=verbose,
-                                                terminal=terminal, speech_already_streamed=True)
-                    else:
-                        observation_action(command)
-                elif wait_for_turn_end and command.kind == "mode":
+                if wait_for_turn_end and command.kind == "mode":
                     previous = requested_mode or mode_selection.mode
                     requested_mode = command.params["mode"]
                     if event_log is not None:
                         event_log.record("session.mode_requested", mode=requested_mode,
                                          changed=previous != requested_mode,
+                                         response_id=response_id, turn_source=active_source,
                                          co_photo_active=mode_selection.co_photo_active)
                 elif (requested_mode is not None and (after_switch or requested_mode != mode_selection.mode)
                       and command.kind not in {"speak", "blank"}):
@@ -1595,7 +1558,7 @@ async def receive_realtime_outputs(
                 brace_missing = dispatch_model_commands(
                     immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
                     photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness,
-                    speech_already_streamed=True)
+                    speech_already_streamed=True, response_id=response_id, turn_source=active_source)
         elif kind == "done":
             if response_id is not None and response_id != active_response_id:
                 continue
@@ -1612,10 +1575,10 @@ async def receive_realtime_outputs(
                 # Multiple tags can resolve back to the already loaded mode.
                 dispatch_model_commands(after_switch, canvas, speech_queue, event_log,
                                         verbose=verbose, photo_capture=photo_capture, terminal=terminal, readiness=readiness,
-                                        speech_already_streamed=True)
+                                        speech_already_streamed=True, response_id=response_id, turn_source=source)
                 requested_mode = None
                 after_switch.clear()
-            if readiness is not None and source != "observation":
+            if readiness is not None:
                 readiness.finish_turn()
         elif kind == "closed":
             speech_queue.read_aloud(None)

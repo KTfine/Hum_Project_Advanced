@@ -43,11 +43,6 @@ class CoPhotoReadiness:
         self._latest: _Composition | None = None
         self._before_turn: _Composition | None = None
 
-    @property
-    def pending_action(self) -> bool:
-        """Keep the user's requested composition intact until its next settled frame."""
-        return self._turn_open or self._pending == "action"
-
     def begin_turn(self) -> None:
         if self._turn_open:
             return

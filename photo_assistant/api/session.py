@@ -10,8 +10,7 @@ from .client import ENDPOINT, ApiError, DeepSeekClient, Image
 from photo_assistant.protocol import StreamingCommandParser
 
 
-_OBSERVATION = ("这是定时送来的当前画面。沿用用户最近的拍摄目标，有新的、有用的反馈时用 <speak:内容> 简短说出，"
-                "避免重复之前的建议。无需回应时输出 <blank>。")
+_OBSERVATION = "【定时画面观察】"
 
 
 async def open_session(
@@ -39,8 +38,13 @@ class DirectSession:
         self._max_turns = max_turns
         self._user_turns = 0
         self._handoff = tuple(handoff_messages)
+        self._last_observation = ()
+        # Preserve the user's request across mode switches. Replace its attached
+        # observation when a newer one arrives, even before the user speaks again.
+        if len(self._handoff) > 2 and self._handoff[-2] == {"role": "user", "content": _OBSERVATION}:
+            self._last_observation = self._handoff[-2:]
+            self._handoff = self._handoff[:-2]
         self._history = []
-        self._last_feedback = ""
         self._latest_frame: tuple[bytes, dict[str, float | str] | None] | None = None
         self._events = asyncio.Queue()
         self._response_id = None
@@ -109,18 +113,12 @@ class DirectSession:
         elif no_camera:
             content = [{"type": "text", "text": text}, {"type": "text", "text": "当前没有可用的摄像头画面。"}]
         user_message = {"role": "user", "content": content}
-        messages = [self._system, *self._handoff, *self._history]
-        if self._last_feedback:
-            messages.extend((
-                {"role": "user", "content": "【上一次画面观察】"},
-                {"role": "assistant", "content": self._last_feedback},
-            ))
-        messages.append(user_message)
+        messages = [self._system, *self._handoff, *self._history, *self._last_observation, user_message]
         if not observation:
             # Keep the user's goal even when its answer is interrupted.
             self._history.append(user_message)
             self._user_turns += 1
-            self._last_feedback = ""
+            self._last_observation = ()
         self._active_is_observation = observation
         self._response_id = uuid.uuid4().hex
         self._active = asyncio.create_task(self._complete(messages, self._response_id, observation))
@@ -161,18 +159,18 @@ class DirectSession:
         emit({"type": "response.done", "text": result.text, "metadata": result.metadata})
 
     def handoff_messages(self) -> tuple[dict[str, str], ...]:
-        """Keep the last user turn and reply as history, without images or old frame coordinates."""
+        """Carry the last user exchange and latest observation response as text."""
         last_user = next((i for i in range(len(self._history) - 1, -1, -1)
                           if self._history[i]["role"] == "user"), None)
         if last_user is None:
-            return self._handoff
+            return self._handoff + self._last_observation
         messages = []
         for message in self._history[last_user:]:
             content = message["content"]
             # submit_frame stores the utterance in the first block, before the camera data.
             text = content if isinstance(content, str) else content[0]["text"]
             messages.append({"role": message["role"], "content": text})
-        return tuple(messages)
+        return tuple(messages) + self._last_observation
 
     async def recv(self) -> dict:
         while True:
@@ -180,9 +178,11 @@ class DirectSession:
             if response_id is None or response_id == self._response_id:
                 if event["type"] == "response.done" and event.get("turn_source") == "observation":
                     commands = StreamingCommandParser(allow_plain_speech=True).feed(response_id, event["text"])
-                    feedback = "".join(command.params["text"] for command in commands if command.kind == "speak")
-                    if feedback:
-                        self._last_feedback = feedback
+                    if any(command.kind != "blank" for command in commands):
+                        self._last_observation = (
+                            {"role": "user", "content": _OBSERVATION},
+                            {"role": "assistant", "content": event["text"]},
+                        )
                 if event["type"] in {"response.done", "error"} and response_id == self._response_id:
                     self._response_id = None
                 return event

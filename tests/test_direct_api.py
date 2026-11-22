@@ -21,10 +21,11 @@ async def read_until(session, kind):
 
 
 class DirectApiTests(unittest.IsolatedAsyncioTestCase):
-    async def test_feedback_turns_keep_only_the_latest_spoken_observation_and_do_not_use_user_quota(self):
+    async def test_observations_keep_latest_action_or_speech_without_using_user_quota(self):
         calls = []
-        replies = iter(("<speak:好。>", "<speak:第一条观察。>", "<blank>",
-                       "<capture><speak:第二条观察。>", "<speak:是的。>"))
+        move = "<teleport:x=0.4,y=0.8>"
+        shot = "<capture><speak:拍好了。>"
+        replies = iter(("<speak:好。>", move, "<blank>", shot, "<speak:是的。>"))
 
         async def complete(messages, *, on_delta):
             calls.append(messages)
@@ -34,7 +35,7 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
 
         provider = AsyncMock()
         provider.complete.side_effect = complete
-        session = DirectSession("guidance", provider, max_turns=2)
+        session = DirectSession("co-photo", provider, max_turns=2)
         self.addAsyncCleanup(session.close)
         jpeg = b"\xff\xd8\xffA"
         self.assertFalse(session.can_observe)
@@ -55,21 +56,44 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
             done = await read_until(session, "response.done")
             self.assertEqual(done["turn_source"], "observation")
             self.assertEqual(done["response_id"], delta["response_id"])
-            self.assertEqual(original, session.handoff_messages())
+            self.assertEqual(session.handoff_messages(), original + (
+                {"role": "user", "content": "【定时画面观察】"},
+                {"role": "assistant", "content": move if i < 2 else shot},
+            ))
             blocks = calls[-1][-1]["content"]
-            self.assertIn("<blank>", blocks[0]["text"])
+            self.assertEqual(blocks[0]["text"], "【定时画面观察】")
             self.assertEqual(blocks[1]["type"], "image_url")
             self.assertIn('"x": 0.25', blocks[2]["text"])
             if i:
-                self.assertEqual(calls[-1][-2]["content"], "第一条观察。")
+                self.assertEqual(calls[-1][-2]["content"], move)
         self.assertEqual(len(calls[2]), len(calls[3]))
         session.submit_frame(None, "刚才说的什么？")
         self.assertNotIn("turn_source", await read_until(session, "response.done"))
-        self.assertEqual(calls[-1][-2], {"role": "assistant", "content": "第二条观察。"})
+        self.assertEqual(calls[-1][-2], {"role": "assistant", "content": shot})
         self.assertEqual(session.handoff_messages()[0]["content"], "刚才说的什么？")
         await session.close()
         self.assertFalse(session.can_observe)
         self.assertFalse(session.submit_observation(jpeg))
+
+    async def test_observation_mode_switch_keeps_real_user_goal_and_replaces_previous_observation(self):
+        user_exchange = ({"role": "user", "content": "准备好以后和我合照。"},
+                         {"role": "assistant", "content": "<speak:好。>"})
+        marker = {"role": "user", "content": "【定时画面观察】"}
+        previous_observation = (marker, {"role": "assistant", "content": "<speak:等你准备好。>"})
+        previous = user_exchange + previous_observation
+        provider = AsyncMock()
+        mode_reply = "<mode:co-photo><stand>"
+        provider.complete.return_value = SimpleNamespace(text=mode_reply, metadata={})
+        session = DirectSession("guidance", provider, handoff_messages=previous)
+        self.addAsyncCleanup(session.close)
+        self.assertEqual(session.handoff_messages(), previous)
+        self.assertTrue(session.submit_observation(b"\xff\xd8\xffB", placement={"x": .25}))
+        await read_until(session, "response.done")
+        messages, = provider.complete.await_args.args
+        self.assertEqual(messages[1:-1], list(previous))
+        self.assertEqual(session.handoff_messages(), user_exchange + (
+            marker, {"role": "assistant", "content": mode_reply},
+        ))
 
     async def test_user_interrupts_observation_started_from_mode_handoff(self):
         started, cancelled = asyncio.Event(), asyncio.Event()

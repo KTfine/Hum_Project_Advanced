@@ -228,42 +228,49 @@ class CameraObservationReceiverTests(unittest.TestCase):
             event_log=self.log, mode_selection=self.modes, terminal=Mock(), readiness=self.readiness,
             photo_capture=self.shutter))
 
-    def test_observation_can_speak_and_change_face_without_changing_body_or_position(self):
+    def test_observation_can_change_face_without_losing_entry_placement(self):
         original = self.canvas.controller.state_at()
         departure = self.canvas._departure = object()
-        body_change = replace(self.grin, torso='正着站').command()
-        self.receive(self.delta('<speak:光线柔和了。><cap'), self.delta('ture><mode:guidance><follow>'),
-                     self.delta(self.grin.command() + body_change + '<blank>'),
+        self.receive(self.delta('<speak:光线柔和了。>' + self.grin.command()),
                      {'type': 'response.done', 'response_id': 'camera', 'turn_source': 'observation'})
         self.voice.say.assert_called_once_with('光线柔和了。')
-        self.shutter.save.assert_not_called()
-        self.assertEqual(self.modes.mode, 'co-photo')
         self.assertEqual(self.canvas.controller.state_at(), replace(original, pose=self.grin))
         self.assertIs(self.canvas._departure, departure)
         self.assertIsNone(self.canvas._pose_override)
-        self.assertIsNone(self.readiness.last_action_succeeded)
-        self.assertEqual([r['command']['kind'] for r in self.log.rows if r['event'] == 'command.skipped'],
-                         ['capture', 'mode', 'follow', 'tachie'])
 
-    def test_guidance_and_pending_user_placement_keep_current_expression(self):
+    def test_observation_can_switch_view_and_defer_its_shutter_and_actions(self):
         self.modes.select('guidance')
         self.modes.mark_loaded(*self.modes.snapshot())
-        self.receive(self.delta(self.grin.command()))
-        self.assertEqual(self.canvas.controller.state_at().pose, self.pose)
+        handoff = self.receive(self.delta('<mode:co-photo><sta'), self.delta('nd><capture>'),
+                               {'type': 'response.done', 'response_id': 'camera'})
+        self.assertEqual(handoff, ('co-photo', [client.Command('stand', {}), client.Command('capture', {})]))
+        self.assertEqual(self.modes.mode, 'co-photo')
+        self.shutter.save.assert_not_called()
 
-        self.modes.select('co-photo')
-        self.modes.mark_loaded(*self.modes.snapshot())
-        settled = dict(x=.5, y=.9, scale=1., current_tachie=self.pose.command(),
-                       avatar_visible=True, pose_settled=True)
-        self.assertEqual(self.readiness.observe(settled), 'entry')
+    def test_observation_can_move_sideways_with_a_streamed_teleport(self):
+        original = self.canvas.controller.state_at()
+        self.receive(self.delta('<teleport:x=0.72,'),
+                     self.delta(f'y={original.y}><speak:我往右挪一点。>'))
+        self.assertEqual(self.canvas.controller.state_at(), replace(original, x=.72))
+        self.voice.say.assert_called_once_with('我往右挪一点。')
+        self.assertEqual([row['event'] for row in self.log.rows if row['event'] in ('command.applied', 'speak')],
+                         ['command.applied', 'speak'])
+
+    def test_observation_applies_new_pose_before_shutter_while_prior_placement_is_settling(self):
+        original = self.canvas.controller.state_at()
         self.readiness.action_result('teleport', applied=True)
         self.readiness.finish_turn()
-        self.receive(self.delta(self.grin.command() + '<speak:现在光线很好。>'),
+        pose = replace(self.grin, torso='正着站')
+        captured = []
+
+        def capture():
+            captured.append(self.canvas.controller.state_at())
+            return 'shot.png'
+
+        self.shutter.save.side_effect = capture
+        self.receive(self.delta(pose.command() + '<teleport:x=0.72,y=0.9><capture>'),
                      {'type': 'response.done', 'response_id': 'camera'})
-        self.assertEqual(self.canvas.controller.state_at().pose, self.pose)
-        self.assertTrue(self.readiness.pending_action)
-        self.assertTrue(self.readiness.last_action_succeeded)
-        self.assertEqual(self.readiness.observe({**settled, 'x': .3}), 'action')
+        self.assertEqual(captured, [replace(original, pose=pose, x=.72, y=.9)])
 
     def test_face_variants_keep_the_same_seat_or_wall_contact(self):
         entries = self.canvas.avatar_frames.catalog.entries
@@ -277,10 +284,10 @@ class CameraObservationReceiverTests(unittest.TestCase):
                 entries[self.pose] = replace(entries[self.pose], **{field: (50, 80)})
                 entries[self.grin] = replace(entries[self.grin], **{field: (50, 81)})
                 command = client.Command('tachie', vars(self.grin))
-                self.assertIsNone(self.canvas.apply_expression(command))
+                self.assertIsNone(self.canvas._apply_face_change(command, self.grin))
                 self.assertEqual(self.canvas.controller.state_at().pose, self.pose)
                 entries[self.grin] = replace(entries[self.grin], **{field: (50, 80)})
-                self.assertEqual(self.canvas.apply_expression(command).pose, self.grin)
+                self.assertEqual(self.canvas.apply_command(command).pose, self.grin)
                 self.assertIs(self.canvas._fixed, placement)
                 self.assertIs(self.canvas._seat, seat)
                 self.assertEqual(self.canvas._pose_override, self.grin)
@@ -289,9 +296,10 @@ class CameraObservationReceiverTests(unittest.TestCase):
                     self.assertEqual(self.canvas._brace.pose, self.grin)
 
     def test_interrupted_and_failed_observations_discard_stale_speech_and_accept_user_shutter(self):
-        self.receive(self.delta('<speak:有人路过，未说完'),
+        original = self.canvas.controller.state_at()
+        self.receive(self.delta('<mode:guidance><capture><speak:有人路过，未说完'),
                      {'type': 'response.interrupted', 'response_id': 'camera', 'turn_source': 'observation'},
-                     self.delta('的旧话。><capture>'),
+                     self.delta('的旧话。><teleport:x=0.72,y=0.9><capture>'),
                      self.delta('<speak:半句话', rid='failure'),
                      {'type': 'error', 'response_id': 'failure', 'turn_source': 'observation',
                       'error': {'code': 'provider_error'}},
@@ -300,6 +308,8 @@ class CameraObservationReceiverTests(unittest.TestCase):
                      {'type': 'response.done', 'response_id': 'person'},
                      self.delta('延迟到达。', rid='person', source='user'))
         self.shutter.save.assert_called_once_with()
+        self.assertEqual(self.modes.mode, 'co-photo')
+        self.assertEqual(self.canvas.controller.state_at(), original)
         self.assertEqual([entry.args[0] for entry in self.voice.say.call_args_list], ['有人路过，', '可以拍。'])
         self.assertEqual(sum(row['event'] == 'observation.failed' for row in self.log.rows), 1)
 

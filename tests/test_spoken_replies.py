@@ -100,7 +100,7 @@ class SpokenReplyTests(unittest.IsolatedAsyncioTestCase):
                 queue.read_aloud(final=True)
                 self.assertEqual([args.args[0] for args in output.say.call_args_list], clauses)
 
-    async def test_idle_ready_event_updates_status_without_encoding_an_image(self):
+    async def test_idle_ready_event_updates_status_silently_without_encoding_an_image(self):
         stop = threading.Event()
         session = Mock()
         session.submit_frame.side_effect = lambda *args, **kwargs: stop.set()
@@ -113,7 +113,7 @@ class SpokenReplyTests(unittest.IsolatedAsyncioTestCase):
             await client.send_realtime_inputs(
                 session, canvas, Mock(), stop, terminal=terminal, readiness=readiness, report_placement=True,
             )
-        terminal.line.assert_called_once_with("[合照] 角色已就位。")
+        terminal.line.assert_not_called()
         terminal.speech.assert_not_called()
         session.submit_frame.assert_called_once_with(
             None, None, placement={"pose_settled": True, "readiness_event": "action",
