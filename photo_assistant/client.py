@@ -25,12 +25,15 @@ from .api import session as direct_api
 from .api.client import configured_api_key, read_project_settings
 from .avatar.controller import AvatarController, AvatarState
 from .avatar.frames import AvatarFrames, apply_teleport_effect
-from .avatar.pose import AvatarPose, DEFAULT_SPRITE_CATALOG, WHITE_DRAGON_CATALOG
+from .avatar.pose import AvatarPose, WHITE_DRAGON_CATALOG
 from .console import TerminalOutput
 from .paths import PROJECT_ROOT
 from .persona import add_persona_options, load_persona_option
-from .prompts import CO_PHOTO_COMMAND_PROMPT, LIVE_ENTRY_CONTEXT, PHOTO_GUIDANCE_PROMPT, character_name_for
-from .protocol import CHARACTER_ACTIONS, Command, StreamingCommandParser
+from .prompts import (
+    CO_PHOTO_COMMAND_PROMPT, FIXED_CAMERA_CONTEXT, LIVE_ENTRY_CONTEXT,
+    MOVING_CAMERA_CONTEXT, PHOTO_GUIDANCE_PROMPT, character_name_for,
+)
+from .protocol import Command, StreamingCommandParser
 from .readiness import CoPhotoReadiness
 from .speech_output import SpeechOutput
 from .voice_input import recognize_microphone
@@ -43,10 +46,11 @@ from .vision.layers import LiveMaskSource, SceneLayers
 from .vision.occlusion import PersonOcclusion
 from .vision.peek import peek_placement
 from .vision.perspective import (
-    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, matched_standing_height_px, person_reference, standing_height_px,
+    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, PersonSilhouettes, matched_standing_height_px,
+    person_reference, standing_height_px,
 )
 from .vision.scene import SceneSegmenter
-from .vision.seat import table_seat
+from .vision.seat import find_seat
 from .vision.support import WallBrace, wall_brace
 
 
@@ -383,15 +387,24 @@ def alpha_composite_at(
     src_right = src_left + (dst_right - dst_left)
     src_bottom = src_top + (dst_bottom - dst_top)
     source = avatar[src_top:src_bottom, src_left:src_right]
-    destination = canvas[dst_top:dst_bottom, dst_left:dst_right]
+    foreground = cv2.cvtColor(source, cv2.COLOR_BGRA2BGR)
     alpha = source[:, :, 3].astype(np.float32) / 255.0
+    return _blend_sprite(canvas, foreground, alpha, dst_left, dst_top, foreground_masks)
+
+
+def _blend_sprite(canvas, foreground, alpha, left, top, foreground_masks) -> bool:
+    """Blend a clipped projection with the current exposure's foreground masks."""
+    import cv2
+
+    height, width = alpha.shape
+    rows, cols = slice(top, top + height), slice(left, left + width)
     if foreground_masks:
-        regions = (m[dst_top:dst_bottom, dst_left:dst_right] for m in foreground_masks)
+        regions = (mask[rows, cols] for mask in foreground_masks)
         covered = next(regions)
         for region in regions:
             covered = np.maximum(covered, region)
-        alpha *= 1.0 - covered
-    foreground = cv2.cvtColor(source, cv2.COLOR_BGRA2BGR)
+        alpha = alpha * (1.0 - covered)
+    destination = canvas[rows, cols]
     cv2.blendLinear(destination, foreground, 1.0 - alpha, alpha, dst=destination)
     return bool(np.any(alpha >= 1 / 255))
 
@@ -511,6 +524,16 @@ class _PendingEntrance:
     departure: DepartureWatch | None = None
 
 
+@dataclass(frozen=True)
+class _ProjectedSprite:
+    source: np.ndarray
+    geometry: tuple
+    left: int
+    top: int
+    color: np.ndarray
+    alpha: np.ndarray
+
+
 class CanvasSource:
     """Compose the selected character sprite with the camera view."""
 
@@ -548,18 +571,17 @@ class CanvasSource:
         self._preview_camera: CameraSource | None = None
         self._show_character = True
         self._placement_lock = threading.Lock()
+        self._projected_sprite: _ProjectedSprite | None = None
         self._entrance: _PendingEntrance | None = None
         self._fixed: Placement | None = None
         self._seat = None
         self._brace: WallBrace | None = None
         self._departure: DepartureWatch | None = None
         self._pose_override: AvatarPose | None = None
-        self._alongside_height_ratio: float | None = None
         self._projection_anchor: Placement | None = None
         self._body_horizon: float | None = None
         self._project_scene = project_scene
         self._manual_layer = False
-        self._return_beside = False
         self._revision = 0
         # Distinguish a newer user/view request from automatic entrance or pose changes.
         self._input_revision = 0
@@ -593,8 +615,7 @@ class CanvasSource:
                 self._brace = None
                 self._projection_anchor = self._body_horizon = None
                 self._manual_layer = False
-                self._fixed = self._departure = self._alongside_height_ratio = None
-                self._return_beside = False
+                self._fixed = self._departure = None
                 self._pose_override = None
                 wait_for_edge = camera is not None and bool(self.scene_layers.names)
                 self.controller = self._controller_for(
@@ -607,8 +628,7 @@ class CanvasSource:
                 self._projection_anchor = self._body_horizon = None
                 self._manual_layer = False
                 self._entrance = None
-                self._fixed = self._departure = self._alongside_height_ratio = None
-                self._return_beside = False
+                self._fixed = self._departure = None
                 self._pose_override = None
         if self.scene_layers.live is not None:
             self.scene_layers.live.set_enabled(camera is not None and show_character)
@@ -629,6 +649,36 @@ class CanvasSource:
         if self.preview:
             self._thread = threading.Thread(target=self._preview_loop, name="canvas-preview", daemon=True)
             self._thread.start()
+
+    def apply_expression(self, command: Command) -> AvatarState | None:
+        """Change only the face on a visible pose, preserving its placement and entry behavior."""
+        if command.kind != "tachie":
+            raise ValueError("表情切换需要 tachie 指令")
+        pose = AvatarPose.from_tags(command.params)
+        with self._placement_lock:
+            if not self._show_character or self._entrance is not None or self.controller is None:
+                return None
+            state = self.controller.state_at()
+            if replace(state.pose, face=pose.face) != pose:
+                return None
+            if state.pose == pose:
+                return state
+            catalog = self.avatar_frames.catalog
+            target = catalog.entry(pose)
+            if self._seat is not None or self._brace is not None:
+                current = catalog.entry(state.pose)
+                contact = "seat_contact_px" if self._seat is not None else "wall_contact_px"
+                if (current.anchor_px != target.anchor_px or current.standing_height_px != target.standing_height_px
+                        or getattr(current, contact) != getattr(target, contact)):
+                    return None
+            self.avatar_frames.frame(pose)
+            state = self.controller.apply_command(command)
+            if self._pose_override is not None:
+                self._pose_override = pose
+            if self._brace is not None:
+                self._brace = replace(self._brace, pose=pose)
+            self._revision += 1
+            return state
 
     def apply_command(self, command: Command) -> AvatarState | None:
         if self.controller is None:
@@ -656,23 +706,17 @@ class CanvasSource:
                 return self._scene_pose_once(Command("brace", {}), requested_pose=pose)
             if (pose.legs == "坐着" and self._project_scene and self._show_character
                     and getattr(self.avatar_frames.catalog.entry(pose), "seat_contact_px", None) is not None):
-                # A separate artwork command can arrive after a semantic sit in
-                # the same response. Preserve the table the user just selected.
+                # A seated artwork change should target the same supporting edge.
                 target = {}
                 with self._placement_lock:
                     state = self.controller.state_at()
                     if self._seat is not None:
                         if state.pose == pose:
                             return state
-                        left, top, right, bottom = self._seat.host_box
-                        target = {"x": (left + right) / 2, "y": (top + bottom) / 2}
+                        x, y = self._seat.support_xy
+                        target = {"x": x, "y": y}
                 return self._scene_pose_once(Command("sit", target), requested_pose=pose)
         with self._placement_lock:
-            previous = self._fixed or (self._entrance.placement if self._entrance is not None else None)
-            if (command.kind == "teleport" and self._project_scene and
-                    command.params.get("depth") in ("near", "far") and "scale" not in command.params):
-                # The landing point determines perspective. Keep the body's scale calibration.
-                command = Command("teleport", {**command.params, "scale": self.controller.state_at().scale})
             target = self.controller.apply_command(command)
             if target is None:
                 return None
@@ -694,31 +738,16 @@ class CanvasSource:
                 if self._seat is not None and target.pose.legs != "坐着":
                     x, y = self._seat.floor_xy
                     self._fixed = self._seat = None
-                    target = self.controller.apply_command(Command("teleport", {
-                        "x": x, "y": y, "scale": target.scale, "depth": "alongside",
-                    }))
-                    self._return_beside = False
+                    target = self.controller.apply_command(Command("teleport", {"x": x, "y": y}))
             if command.kind == "teleport":
                 if self._seat is not None:
                     self._seat = None
                     self._pose_override = self.avatar_frames.catalog.standing_pose
                     target = self.controller.apply_command(Command("tachie", vars(self._pose_override)))
-                if "depth" in command.params and self._project_scene:
+                if self._manual_layer and self._project_scene:
                     self._manual_layer = False
                     target = self.controller.apply_command(Command("layer", {"index": 0}))
                 self._entrance = self._fixed = self._departure = None
-                self._return_beside = command.params.get("depth") == "alongside"
-                if previous is not None and "depth" not in command.params and not self._project_scene:
-                    # A lateral destination only changes the foot point. Even if
-                    # the subject already left, reuse the settled camera projection.
-                    height_ratio = previous.standing_height_ratio
-                    if "scale" in command.params:
-                        height_ratio *= target.scale / previous.scale
-                    self._fixed = replace(previous, x=target.x, y=target.y, scale=target.scale,
-                                          standing_height_ratio=height_ratio,
-                                          source="指定构图" if previous.source else "")
-                    if target.camera_depth_mode == "alongside":
-                        self._alongside_height_ratio = height_ratio
             return target
 
     def _scene_pose_once(self, command, requested_pose=None):
@@ -748,11 +777,11 @@ class CanvasSource:
                 return None
             pose = requested_pose or next((p for p, e in catalog.entries.items() if e.seat_contact_px), None)
             if pose is None:
-                raise ValueError("当前立绘库没有带桌沿支撑点的坐姿")
+                raise ValueError("当前立绘库没有带支撑点的坐姿")
             self.avatar_frames.frame(pose)
-            seat = table_seat(frame, scene, catalog.entry(pose), anchor,
-                              target_x=command.params.get("x"), target_y=command.params.get("y"),
-                              table=command.params.get("table"))
+            seat = find_seat(frame, scene, catalog.entry(pose), anchor,
+                             target_x=command.params.get("x"), target_y=command.params.get("y"),
+                             distance=command.params.get("distance", command.params.get("table")))
             if seat is None:
                 return None
             fixed = seat.placement
@@ -781,14 +810,14 @@ class CanvasSource:
             self._fixed, self._seat, self._pose_override = fixed, seat, pose
             self._brace = brace
             self._entrance = self._departure = None
-            self._manual_layer = self._return_beside = False
+            self._manual_layer = False
             if anchor is not None and self._projection_anchor is None:
                 self._projection_anchor = anchor
             self.controller.apply_command(Command("layer", {"index": 0}))
             self.controller.apply_command(Command("rotate", {"mode": "to", "value": 0., "ms": 0}))
             self.controller.apply_command(Command("tachie", vars(pose)))
             return self.controller.apply_command(Command("teleport", {
-                "x": fixed.x, "y": fixed.y, "scale": fixed.scale, "depth": "alongside",
+                "x": fixed.x, "y": fixed.y, "scale": fixed.scale,
             }))
 
     def render_frame(
@@ -817,9 +846,10 @@ class CanvasSource:
 
     def _beside(self, frame, masks, person, state, *, entering, pose_override=None, scene=None):
         height, width = frame.shape[:2]
-        face = measure_face(frame, person)
+        silhouettes = PersonSilhouettes.from_mask(person)
+        face = measure_face(frame, person, silhouettes=silhouettes)
         reference = person_reference(person, face.center_x / width if face else state.x,
-                                     face.center_y / height if face else state.y)
+                                     face.center_y / height if face else state.y, silhouettes=silhouettes)
         catalog = self.avatar_frames.catalog
         framing = self._framing(reference)
         if entering and reference is None and face is None and scene is not None and scene.ground is not None:
@@ -841,11 +871,12 @@ class CanvasSource:
             return None
         opening = side_placement(person, self.avatar_frames.frame(pose), entry.anchor_px, entry.standing_height_px,
                                  foreground_masks=masks, face_box_px=entry.face_box_px, head=face,
-                                 preferred_x=None if entering else state.x, subject_reference=reference, scene=scene)
+                                 preferred_x=None if entering else state.x, subject_reference=reference,
+                                 scene=scene, silhouettes=silhouettes)
         if opening is not None:
             x, y, scale = opening.x, opening.y, opening.scale
             if face is None or entry.face_box_px is None:
-                reference = person_reference(person, x, y)
+                reference = person_reference(person, x, y, silhouettes=silhouettes)
                 framing = self._framing(reference)
             size = scale * self._standing_height(entry, face, reference, height, y)
         elif not entering and framing != "全身" and face is not None and entry.face_box_px:
@@ -883,8 +914,8 @@ class CanvasSource:
             self._input_revision += 1
             request = self._input_revision
             override = self._pose_override
-            leaving_pose = self._brace is not None or (
-                self._fixed is not None and self._fixed.source in ("桌沿坐姿", "肩后探身"))
+            leaving_pose = self._seat is not None or self._brace is not None or (
+                self._fixed is not None and self._fixed.source == "肩后探身")
             if leaving_pose:
                 override = None
         frame = camera.latest_frame()
@@ -913,7 +944,7 @@ class CanvasSource:
                 placement, pose, face = solved
                 entry = self.avatar_frames.catalog.entry(pose)
                 fixed = self._fixed or (self._entrance.placement if self._entrance is not None else None)
-                if (not leaving_pose and fixed is not None and state.pose == pose and state.camera_depth_mode == "alongside"
+                if (not leaving_pose and fixed is not None and state.pose == pose
                         and fixed.already_beside(placement, entry, face, width, height)):
                     if self._project_scene and self._manual_layer:
                         self._manual_layer = False
@@ -928,7 +959,6 @@ class CanvasSource:
                     self._pose_override = None
                 if override is None and pose.torso == "半身歪斜向右" and placement.framing != "全身":
                     self._departure = DepartureWatch.at_entry(person, face, frame)
-                self._return_beside = False
                 self._fixed = placement
                 self._projection_anchor = placement
                 if scene is not None and scene.ground is not None:
@@ -936,44 +966,56 @@ class CanvasSource:
                 if self._project_scene:
                     self._manual_layer = False
                     self.controller.apply_command(Command("layer", {"index": 0}))
-                self._alongside_height_ratio = placement.standing_height_ratio
                 if pose != state.pose:
                     self.controller.apply_command(Command("tachie", vars(pose)))
                 return self.controller.apply_command(Command("teleport", {
-                    "x": placement.x, "y": placement.y, "scale": placement.scale, "depth": "alongside",
+                    "x": placement.x, "y": placement.y, "scale": placement.scale,
                 }))
 
-    def _compose_frame(
+    def _compose_frame(self, now=None, **options) -> tuple[np.ndarray, dict | None]:
+        image, placement, raw = self.compose_view(now, **options)
+        return (image.copy() if image is raw else image), placement
+
+    def compose_view(
         self, now: float | None = None, *, camera_frame: np.ndarray | None = None,
         include_character: bool = True, capture: bool = False, presenting: bool = False,
-    ) -> tuple[np.ndarray, dict | None]:
+    ) -> tuple[np.ndarray, dict | None, np.ndarray | None]:
+        """Return the view, its placement, and the matching camera exposure before compositing."""
         if camera_frame is None:
             canvas = np.full((self.height, self.width, 3), 255, dtype=np.uint8)
         if not include_character:
-            return (canvas if camera_frame is None else camera_frame.copy()), None
+            return (canvas if camera_frame is None else camera_frame), None, camera_frame
         if self.controller is None or self.avatar_frames is None:
             raise RuntimeError("canvas has not been started")
         # Preserve the shutter's original pose and layer while segmentation runs.
         with self._placement_lock:
             controller, entrance, fixed = self.controller, self._entrance, self._fixed
-            revision, alongside_height_ratio = self._revision, self._alongside_height_ratio
+            revision = self._revision
             anchor, manual_layer = self._projection_anchor, self._manual_layer
             seat = self._seat
             brace = self._brace
             body_horizon = self._body_horizon
             override = self._pose_override
-            return_beside = self._return_beside
             composing = self._preview_camera is not None and self._show_character
             state, follow_ground, arrival = controller.render_state(now)
             needs_opening = entrance is not None and entrance.placement is None
         solution = watch = None
         masks, person = (), None
         scene = None
+        background = None
         if camera_frame is not None:
-            camera_frame, masks, person, scene = self.scene_layers.resolve(camera_frame, state.layer_index, capture=capture)
-            canvas = camera_frame.copy()
+            latest_frame = camera_frame
+            camera_frame, masks, person, scene = self.scene_layers.resolve(
+                camera_frame, state.layer_index, capture=capture, seat=None if manual_layer else seat)
+            if presenting and latest_frame.shape != camera_frame.shape:
+                return latest_frame.copy(), None, latest_frame
+            # The fixed-camera worker updates the person separately from the room.
+            # Display that person's own exposure so a moving hand cannot leave its mask behind.
+            live_background = presenting and (scene is None or not scene.fixed_camera)
+            background = latest_frame if live_background else camera_frame
+            canvas = background.copy()
             if masks is None:
-                return canvas, None
+                return canvas, None, background
             if needs_opening:
                 geometry_masks = masks
                 if scene is not None and state.layer_index == 0:
@@ -988,21 +1030,15 @@ class CanvasSource:
                                             scene=scene)
                     if solution is not None and solution[1] != self.avatar_frames.catalog.standing_pose:
                         watch = DepartureWatch.at_entry(person, solution[2], camera_frame)
-            elif return_beside and composing:
-                geometry_masks = masks
-                if scene is not None and state.layer_index == 0:
-                    geometry_masks = (*masks, *(obj.mask for obj in scene.objects))
-                solution = self._beside(camera_frame, geometry_masks, person, state, entering=False,
-                                        pose_override=override, scene=scene)
         elif composing:
-            return canvas, None
+            return canvas, None, None
         height, width = canvas.shape[:2]
         catalog = self.avatar_frames.catalog
         with self._placement_lock:
             current = revision == self._revision and controller is self.controller
             if current:
                 fixed = self._fixed
-            if scene is not None and (body_horizon is None or needs_opening or return_beside):
+            if scene is not None and (body_horizon is None or needs_opening):
                 if scene.ground is not None:
                     body_horizon = scene.ground.horizon_y
                 elif body_horizon is None:
@@ -1016,8 +1052,8 @@ class CanvasSource:
                 if entrance.placement is None:
                     if solution is None:
                         if scene is None:
-                            return canvas, None
-                        return canvas, {"avatar_visible": False, "scene_objects": scene.descriptions}
+                            return canvas, None, background
+                        return canvas, {"avatar_visible": False, "scene_objects": scene.descriptions}, background
                     entrance.placement, entrance.pose, _ = solution
                     entrance.departure = watch
                 fixed = entrance.placement
@@ -1029,7 +1065,6 @@ class CanvasSource:
                     controller.update_side_placement(fixed.x, fixed.y, fixed.scale, arrival_at=started_at)
                     if controller.state_at(now).pose != state.pose:
                         controller.apply_command(Command("tachie", vars(state.pose)), now=now)
-                    self._alongside_height_ratio = fixed.standing_height_ratio
                     self._projection_anchor = fixed
                     if reveal:
                         self._fixed = fixed
@@ -1047,62 +1082,52 @@ class CanvasSource:
                     self._revision += 1
             else:
                 entry = catalog.entry(state.pose)
-                face = measure_face(camera_frame, person)
-                reference = person_reference(person, state.x, state.y)
+                silhouettes = PersonSilhouettes.from_mask(person)
+                face = measure_face(camera_frame, person, silhouettes=silhouettes)
+                reference = person_reference(person, state.x, state.y, silhouettes=silhouettes)
                 y = reference.foot_y if follow_ground and reference else state.y
-                size = self._standing_height(entry, face, reference, height, y)
-                if (state.camera_depth_mode != "alongside" or return_beside) and alongside_height_ratio is not None:
-                    size = alongside_height_ratio * height
-                size *= state.scale
-                if scene is not None and not return_beside:
+                # A portrait may provide a reliable body size from the face but
+                # no visible feet. Project that measurement from a stable point.
+                face_reference = (composing and not follow_ground and face is not None and entry.face_box_px
+                                  and (reference is None or reference.estimated))
+                if scene is not None or anchor is not None or face_reference:
                     if anchor is None:
                         ax, ay, ah = camera_reference()
                         if reference is not None:
-                            ay, ax = reference.foot_y, state.x
+                            ay = reference.foot_y
+                        if reference is not None or face_reference:
+                            if face is not None:
+                                ax = face.center_x / width
                             ah = self._standing_height(entry, face, reference, height, ay) / height
                         anchor = Placement(ax, ay, 1.0, ah)
                         if current and composing:
                             self._projection_anchor = anchor
-                    size = (height * projected_height(anchor.y, anchor.standing_height_ratio, y, body_horizon)
+                    horizon = body_horizon if body_horizon is not None else 0.4
+                    size = (height * projected_height(anchor.y, anchor.standing_height_ratio, y, horizon)
                             * state.scale / anchor.scale)
-                elif (state.camera_depth_mode != "alongside" and face is not None and entry.face_box_px
-                        and reference is not None and reference.estimated and 0 <= state.x <= 1 and y >= 0):
-                    y = Placement.portrait_foot(y, state, face, entry, size / entry.standing_height_px, height)
+                else:
+                    size = self._standing_height(entry, face, reference, height, y) * state.scale
                 framing = self._framing(reference)
                 fixed = Placement(state.x, y, state.scale, size / height,
                                   framing, "指定构图" if framing or scene is not None else "")
-                if return_beside and solution is not None:
-                    fixed = replace(solution[0], source="指定构图")
-                    state = replace(state, pose=solution[1])
                 if current and composing:
                     self._fixed = fixed
-                    if return_beside and solution is not None:
-                        self._projection_anchor = fixed
-                    self._return_beside = False
-                    # Store the apparent size once, including the entrance's calibrated scale.
-                    if state.camera_depth_mode == "alongside":
-                        self._alongside_height_ratio = fixed.standing_height_ratio
-                    elif self._alongside_height_ratio is None:
-                        self._alongside_height_ratio = fixed.standing_height_ratio / state.scale
                     controller.update_side_placement(fixed.x, fixed.y, fixed.scale)
-                    if return_beside and controller.state_at(now).pose != state.pose:
-                        controller.apply_command(Command("tachie", vars(state.pose)), now=now)
                 elif follow_ground and reference is not None:
                     controller.observe_ground(y, time.monotonic())
         entry = catalog.entry(state.pose)
         size = fixed.standing_height_ratio * height
         if scene is not None and seat is not None and state.layer_index == 0 and not manual_layer:
-            furniture, foreground_person = seat.foreground(scene)
+            furniture, foreground_person = scene.projected_foreground(fixed.x, fixed.y, seat=seat)
             masks = (*(mask for mask in masks if mask is not person), furniture, foreground_person)
         elif scene is not None:
             person_cover = scene.foreground_person
             if state.layer_index == 0:
                 cover = scene.object_cover
                 if scene.ground is not None and not manual_layer:
-                    closer = scene.depth_visibility(fixed.x, fixed.y)
-                    cover = scene.furniture_cover(fixed.x, fixed.y, closer)
-                    if brace is not None or state.camera_depth_mode != "alongside" or fixed.source in ("指定构图", "桌后站位"):
-                        person_cover = person_cover * closer
+                    depth_order_person = brace is not None or fixed.source in ("指定构图", "桌后站位")
+                    cover, person_cover = scene.projected_foreground(
+                        fixed.x, fixed.y, depth_order_person=depth_order_person)
                 if scene.objects:
                     masks = (*masks, cover)
             masks = tuple(person_cover if mask is person else mask for mask in masks)
@@ -1110,12 +1135,14 @@ class CanvasSource:
                                     fixed.x, fixed.y, size / entry.standing_height_px, state.rotation,
                                     masks, arrival=arrival if presenting else 1.0)
         placement = {"x": fixed.x, "y": fixed.y, "scale": fixed.scale}
+        if seat is not None:
+            placement["seat_contact_xy"] = seat.support_xy
+            if seat.host_label is not None:
+                placement["seat_host"] = seat.host_label
         if brace is not None:
             placement["wall_contact_xy"] = brace.contact_xy
         if scene is not None:
             placement.update(scene_objects=scene.descriptions, standing_height_ratio=round(fixed.standing_height_ratio, 4))
-        if fixed.framing or state.camera_depth_mode != "alongside":
-            placement["camera_depth_mode"] = state.camera_depth_mode
         if fixed.source:
             placement["placement_source"] = fixed.source
         if fixed.framing:
@@ -1126,18 +1153,22 @@ class CanvasSource:
                            and controller.rotation_at_target(state.rotation))
             placement.update(current_tachie=state.pose.command(), avatar_visible=visible,
                              pose_settled=settled, rotation=state.rotation, layer_index=state.layer_index)
-        return canvas, placement
+        return canvas, placement, background
 
-    @staticmethod
-    def _draw_sprite(canvas, source, anchor, x, y, scale, rotation, masks, *, arrival=1.0) -> bool:
+    def _draw_sprite(self, canvas, source, anchor, x, y, scale, rotation, masks, *, arrival=1.0) -> bool:
         """Map the sprite's ground point to the camera and warp only its visible area."""
         import cv2
 
         height, width = canvas.shape[:2]
+        foot_x, foot_y = round(x * width), round(y * height)
+        geometry = (width, height, foot_x, foot_y, scale, rotation, anchor)
+        cached = self._projected_sprite
+        if arrival >= 1.0 and cached is not None and cached.source is source and cached.geometry == geometry:
+            return _blend_sprite(canvas, cached.color, cached.alpha, cached.left, cached.top, masks)
         sprite_h, sprite_w = source.shape[:2]
         ax, ay = anchor
         matrix = cv2.getRotationMatrix2D((ax, ay), -rotation, scale)
-        matrix[:, 2] += (round(x * width) - ax, round(y * height) - ay)
+        matrix[:, 2] += (foot_x - ax, foot_y - ay)
         corners = np.array([(0, 0), (sprite_w, 0), (0, sprite_h), (sprite_w, sprite_h)])
         projected = corners @ matrix[:, :2].T + matrix[:, 2]
         left = max(0, math.floor(projected[:, 0].min()))
@@ -1150,7 +1181,12 @@ class CanvasSource:
         sprite = cv2.warpAffine(source, matrix, (right - left, bottom - top))
         if arrival < 1.0:
             sprite = apply_teleport_effect(sprite, arrival)
-        return alpha_composite_at(canvas, sprite, left, top, *masks)
+            return alpha_composite_at(canvas, sprite, left, top, *masks)
+        color = cv2.cvtColor(sprite, cv2.COLOR_BGRA2BGR)
+        alpha = sprite[:, :, 3].astype(np.float32) / 255.0
+        # Each reader keeps its own reference even if another view replaces the cache.
+        self._projected_sprite = _ProjectedSprite(source, geometry, left, top, color, alpha)
+        return _blend_sprite(canvas, color, alpha, left, top, masks)
 
     def latest_jpeg(
         self, camera_frame: np.ndarray | None = None, *, include_character: bool = True
@@ -1161,15 +1197,25 @@ class CanvasSource:
     def jpeg_with_placement(
         self, camera_frame: np.ndarray | None = None, *, include_character: bool = True,
     ) -> tuple[bytes, dict | None]:
+        frame, placement = self.frame_with_placement(camera_frame, include_character=include_character)
+        return self.encode_jpeg(frame), placement
+
+    def frame_with_placement(
+        self, camera_frame: np.ndarray | None = None, *, include_character: bool = True,
+    ) -> tuple[np.ndarray, dict | None]:
+        """Return the model image and matching placement. Treat the image as read-only."""
+        image, placement, _ = self.compose_view(camera_frame=camera_frame, include_character=include_character)
+        return image, placement
+
+    def encode_jpeg(self, frame: np.ndarray) -> bytes:
         import cv2
 
-        frame, placement = self._compose_frame(camera_frame=camera_frame, include_character=include_character)
         ok, encoded = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
         if not ok:
             raise RuntimeError("failed to JPEG-encode canvas")
-        return encoded.tobytes(), placement
+        return encoded.tobytes()
 
     def _preview_loop(self) -> None:
         import cv2
@@ -1194,6 +1240,7 @@ class CanvasSource:
         if self.avatar_frames is not None:
             self.avatar_frames.close()
             self.avatar_frames = None
+        self._projected_sprite = None
 
 
 def decode_output_event(event: dict) -> tuple[str, object]:
@@ -1222,23 +1269,24 @@ async def send_realtime_inputs(
     session, canvas: CanvasSource, camera: CameraSource | None, stop_event: threading.Event,
     *, event_log: FrontendEventLogger | None = None, include_character: bool = True,
     text_input: ConsoleTextInput | None = None, report_placement: bool = False,
-    observation_requires_camera: bool = False,
     readiness: CoPhotoReadiness | None = None,
-    speech_output: SpeechOutput | None = None,
     terminal: TerminalOutput | None = None,
+    observation_interval: float | None = None,
 ) -> None:
-    """Keep the current frame available and deliver each user input exactly once."""
+    """Give user input priority and send the current camera view on each idle observation tick."""
     if terminal is None:
         terminal = TerminalOutput()
     entry_status = None
-    entry_hint_after = time.monotonic() + 3
+    started_at = time.monotonic()
+    entry_hint_after = started_at + 3
+    next_observation_at = started_at + observation_interval if observation_interval is not None else None
+    pending_frame: tuple[np.ndarray, dict | None] | None = None
     while not stop_event.is_set():
         frame = camera.latest_frame() if camera is not None else None
         text = text_input.peek() if text_input is not None else None
-        # A temporarily stale camera frame cannot support an automatic observation.
-        jpeg = placement = None
-        if frame is not None or (camera is None and (text is not None or not observation_requires_camera)):
-            jpeg, placement = canvas.jpeg_with_placement(frame, include_character=include_character)
+        image = placement = None
+        if frame is not None or (camera is None and text is not None):
+            image, placement, _ = canvas.compose_view(camera_frame=frame, include_character=include_character)
         if report_placement and camera is not None:
             placed = placement is not None and placement.get("avatar_visible", True)
             if placed:
@@ -1249,7 +1297,7 @@ async def send_realtime_inputs(
             elif placement and "x" in placement:
                 status, message = "out_of_view", "当前合照画面中看不到角色。"
             else:
-                status, message = "waiting_for_placement", "正在寻找合照位置。可以在身旁留一块空位。"
+                status, message = "waiting_for_placement", "正在寻找合照位置。"
             if status != entry_status and (placed or time.monotonic() >= entry_hint_after):
                 if message:
                     terminal.line(f"[合照] {message}")
@@ -1259,30 +1307,50 @@ async def send_realtime_inputs(
         if readiness is not None:
             if text is not None:
                 readiness.begin_turn()
-            else:
-                message = readiness.observe(placement)
-                if message:
-                    terminal.end_speech()
-                    terminal.speech(message)
-                    terminal.end_speech()
-                    if speech_output is not None:
-                        speech_output.say(message)
+            elif placement is not None:
+                ready_event = readiness.observe(placement)
+                if ready_event is not None:
+                    placement["readiness_event"] = ready_event
+                    terminal.line("[合照] 角色已就位。")
                     if event_log is not None:
-                        event_log.record("speak", text=message, source="co_photo_ready")
+                        event_log.record("canvas.ready", reason=ready_event)
             if placement is None:
                 placement = {"camera_frame_available": frame is not None, "avatar_visible": False}
             if readiness.last_action_succeeded is not None:
                 placement["last_action_succeeded"] = readiness.last_action_succeeded
+        if image is not None:
+            pending_frame = image, placement
+        elif placement is not None and placement.get("camera_frame_available") is False:
+            pending_frame = None
+
+        jpeg = None
+        if text is not None and pending_frame is not None:
+            image, placement = pending_frame
+            jpeg = canvas.encode_jpeg(image)
+            pending_frame = None  # The session now caches the encoded image for this turn.
         if report_placement and placement is not None:
             session.submit_frame(jpeg, text, placement=placement)
         else:
             session.submit_frame(jpeg, text)
         if text is not None:
             text_input.acknowledge(text)
+        if observation_interval is not None:
+            now = time.monotonic()
+            if text is not None or now >= next_observation_at:
+                # Skip missed or busy ticks. A user submission starts a new interval.
+                next_observation_at = now + observation_interval
+                if text is None and frame is not None and image is not None and session.can_observe:
+                    observation_jpeg = canvas.encode_jpeg(image)
+                    submitted = session.submit_observation(observation_jpeg, placement=placement)
+                    if submitted and event_log is not None:
+                        event_log.record("api.observation", jpeg_bytes=len(observation_jpeg), character_placement=placement)
         if event_log is not None:
             frame_info = {"character_placement": placement} if report_placement else {}
             event_log.record("api.input", jpeg_bytes=len(jpeg) if jpeg else 0, text=text, **frame_info)
-        await asyncio.sleep(1.0)
+        delay = 1.0
+        if next_observation_at is not None:
+            delay = min(delay, max(0.0, next_observation_at - time.monotonic()))
+        await asyncio.sleep(delay)
 
 
 def dispatch_model_commands(
@@ -1410,84 +1478,107 @@ async def receive_realtime_outputs(
         on_speech_delta=speech_queue.read_aloud if speech_queue.output is not None else None,
     )
     active_response_id = None
-    interrupted_response_ids = set()
+    active_source = None
+    # The direct session drops superseded events. Also reject replays from other event sources.
+    retired_responses = deque(maxlen=64)
     wait_for_turn_end = mode_selection is not None and getattr(session, "emits_response_done", False)
     requested_mode = None
     after_switch: list[Command] = []
-    deferred_capture_seen = False
     brace_missing = False
+
+    def observation_action(command):
+        if command.kind != "tachie" or mode_selection is None or not mode_selection.co_photo_active:
+            reason = "observation_feedback_only"
+        elif readiness is not None and readiness.pending_action:
+            reason = "user_placement_pending"
+        else:
+            try:
+                target = canvas.apply_expression(command)
+            except (OSError, TypeError, ValueError, RuntimeError) as exc:
+                reason = str(exc)
+            else:
+                if target is not None:
+                    if event_log is not None:
+                        event_log.record("command.applied", command=asdict(command), target=asdict(target),
+                                         response_id=active_response_id, turn_source="observation")
+                    return
+                reason = "expression_requires_current_pose"
+        if event_log is not None:
+            event_log.record("command.skipped", command=asdict(command), reason=reason,
+                             response_id=active_response_id, turn_source="observation")
+
     while not stop_event.is_set():
         event = await session.recv()
         if event_log is not None:
             event_log.record("api.receive", message=event)
-        kind, value = decode_output_event(event)
         response_id = event.get("response_id")
-
-        if kind == "interrupted":
+        source = event.get("turn_source")
+        if source is None:
+            source = active_source if active_source is not None and response_id in (None, active_response_id) else "user"
+        if response_id is not None and response_id in retired_responses:
+            if event_log is not None:
+                event_log.record("parser.stale_output_ignored", response_id=response_id, kind=event.get("type"))
+            continue
+        failed_observation = event.get("type") == "error" and source == "observation"
+        if event.get("type") == "response.interrupted" or failed_observation:
             interrupted_id = response_id or active_response_id
             if interrupted_id is not None:
-                interrupted_response_ids.add(interrupted_id)
+                retired_responses.append(interrupted_id)
             if interrupted_id == active_response_id:
-                if readiness is not None:
+                if readiness is not None and source != "observation":
                     readiness.cancel_turn()
                 speech_queue.read_aloud(None)
                 parser.flush()
                 active_response_id = None
+                active_source = None
                 requested_mode = None
                 after_switch.clear()
                 terminal.end_speech()
             if event_log is not None:
-                event_log.record("parser.interrupted", response_id=interrupted_id)
-            continue
-        if response_id is not None and response_id in interrupted_response_ids:
-            if event_log is not None:
-                event_log.record("parser.stale_output_ignored", response_id=response_id, kind=kind)
+                event_log.record("observation.failed" if failed_observation else "parser.interrupted",
+                                 response_id=interrupted_id, turn_source=source)
             continue
 
+        kind, value = decode_output_event(event)
         if kind == "text":
-            if response_id != active_response_id:
-                if readiness is not None and event.get("turn_source") != "observation":
+            if active_source is None or response_id != active_response_id:
+                if active_source == "user" and source == "observation":
+                    if response_id is not None:
+                        retired_responses.append(response_id)
+                    if event_log is not None:
+                        event_log.record("parser.stale_output_ignored", response_id=response_id, kind=kind,
+                                         turn_source=source)
+                    continue
+                if active_response_id is not None:
+                    retired_responses.append(active_response_id)
+                if readiness is not None and source != "observation":
                     readiness.begin_turn()
                 terminal.end_speech()
                 speech_queue.read_aloud(None)
                 parser.flush()
                 active_response_id = response_id
+                active_source = source
                 requested_mode = None
                 after_switch.clear()
-                deferred_capture_seen = False
                 brace_missing = False
             previous_plain_count = parser.plain_speech_count
             commands = parser.feed(response_id, str(value))
             if event_log is not None:
                 if parser.plain_speech_count != previous_plain_count:
-                    event_log.record("parser.plain_text_adapted", response_id=response_id,
+                    event_log.record("parser.plain_text_adapted", response_id=response_id, turn_source=active_source,
                                      command_count=parser.plain_speech_count - previous_plain_count)
                 for command in commands:
-                    event_log.record("parser.command", command=asdict(command))
+                    event_log.record("parser.command", command=asdict(command),
+                                     response_id=response_id, turn_source=active_source)
             immediate = []
             for command in commands:
-                if command.kind == "wait":
-                    # The session uses this tag to schedule a future frame.
-                    continue
-                task = event.get("observation_task")
-                if task is not None and command.kind == "capture":
-                    if task != "capture" or deferred_capture_seen:
-                        if event_log is not None:
-                            event_log.record("command.skipped", command=asdict(command),
-                                             reason="no_pending_shutter" if task != "capture" else "shutter_already_used")
-                        continue
-                    deferred_capture_seen = True
-                if task is not None and command.kind == "mode":
-                    if event_log is not None:
-                        event_log.record("command.skipped", command=asdict(command),
-                                         reason="mode_change_requires_user_turn")
-                    continue
-                if event.get("turn_source") == "observation" and command.kind in CHARACTER_ACTIONS:
-                    if event_log is not None:
-                        event_log.record("command.skipped", command=asdict(command),
-                                         reason="character_action_requires_user_turn")
-                    continue
-                if wait_for_turn_end and command.kind == "mode":
+                if active_source == "observation":
+                    if command.kind in {"speak", "blank"}:
+                        dispatch_model_commands([command], canvas, speech_queue, event_log, verbose=verbose,
+                                                terminal=terminal, speech_already_streamed=True)
+                    else:
+                        observation_action(command)
+                elif wait_for_turn_end and command.kind == "mode":
                     previous = requested_mode or mode_selection.mode
                     requested_mode = command.params["mode"]
                     if event_log is not None:
@@ -1500,16 +1591,20 @@ async def receive_realtime_outputs(
                     after_switch.append(command)
                 else:
                     immediate.append(command)
-            brace_missing = dispatch_model_commands(
-                immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
-                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness,
-                speech_already_streamed=True)
+            if immediate:
+                brace_missing = dispatch_model_commands(
+                    immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
+                    photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness,
+                    speech_already_streamed=True)
         elif kind == "done":
             if response_id is not None and response_id != active_response_id:
                 continue
             parser.flush(response_id)
             terminal.end_speech()
+            if active_response_id is not None:
+                retired_responses.append(active_response_id)
             active_response_id = None
+            active_source = None
             brace_missing = False
             if requested_mode is not None:
                 if mode_selection.select(requested_mode):
@@ -1520,7 +1615,7 @@ async def receive_realtime_outputs(
                                         speech_already_streamed=True)
                 requested_mode = None
                 after_switch.clear()
-            if readiness is not None:
+            if readiness is not None and source != "observation":
                 readiness.finish_turn()
         elif kind == "closed":
             speech_queue.read_aloud(None)
@@ -1535,29 +1630,40 @@ async def receive_realtime_outputs(
 
 def build_control_prompt(
     canvas: CanvasSource, args: argparse.Namespace, *, mode: str | None = None,
-    entrance: AvatarState | None = None,
+    entrance: AvatarState | None = None, scene_context: str | None = None,
 ) -> str:
     if canvas.controller is None or canvas.avatar_frames is None:
         raise RuntimeError("canvas has not been started")
     mode = "guidance" if mode is None else mode
     template = {"guidance": PHOTO_GUIDANCE_PROMPT, "co-photo": CO_PHOTO_COMMAND_PROMPT}[mode]
-    state, _, _ = canvas.controller.render_state()
-    if entrance is not None:
-        state = entrance
-    return template.format(
+    input_context = "当前没有摄像头输入。" if args.no_camera else "画面来自真人摄像头。"
+    common = dict(
         character_name=args.character_name,
         character_persona=args.character_persona,
         response_language="默认使用中文。用户用英文时用英文回复，用户指明语言时按指定语言回复。",
-        pose_catalog=canvas.avatar_frames.catalog.describe() if mode == "co-photo" else "",
-        tachie_fields=canvas.avatar_frames.catalog.entry_pose.command_fields() if mode == "co-photo" else "",
-        entry_context=LIVE_ENTRY_CONTEXT,
+        recent_context="",
+        extra_instructions=f"用户通过文字输入与你交流。{input_context}",
+    )
+    if mode == "guidance":
+        return template.format(**common)
+
+    if args.no_camera:
+        entry_context = "无相机时显示起始立绘。"
+    else:
+        if scene_context is None:
+            scene_context = MOVING_CAMERA_CONTEXT if args.moving_camera else FIXED_CAMERA_CONTEXT
+        entry_context = f"{LIVE_ENTRY_CONTEXT}\n{scene_context}"
+    state = entrance if entrance is not None else canvas.controller.render_state()[0]
+    catalog = canvas.avatar_frames.catalog
+    return template.format(
+        **common,
+        pose_catalog=catalog.describe(),
+        tachie_fields=catalog.entry_pose.command_fields(),
+        entry_context=entry_context,
         current_character_state=json.dumps(
             {**asdict(state), "scene_layers": canvas.scene_layers.names},
             ensure_ascii=False,
         ),
-        recent_context=("开始合照互动的新会话。"
-                        if mode == "co-photo" else "开始真人拍照指导的新会话。"),
-        extra_instructions="用户通过文字输入与你交流；你会持续收到摄像头画面；保持回复简短。",
     )
 
 
@@ -1578,18 +1684,13 @@ async def run_realtime_sessions(
     terminal = text_input.terminal if text_input is not None else TerminalOutput()
     queued_for_view = None
     handoff_messages = ()
-    pending_observation = None
     while not stop_event.is_set():
         mode, revision = selection.snapshot()
         include_character = bool(args.prompt) or mode == "co-photo"
         entrance = canvas.entrance_state(camera) if include_character else None
         system_prompt = args.prompt or build_control_prompt(canvas, args, mode=mode, entrance=entrance)
         session = await direct_api.open_session(
-            system_prompt, api_key=api_key,
-            observe_on_start=mode == "co-photo" and camera is not None and not args.prompt,
-            handoff_messages=handoff_messages,
-            managed_observations=not args.prompt,
-            pending_observation=pending_observation,
+            system_prompt, api_key=api_key, handoff_messages=handoff_messages,
         )
         tasks = []
         switched = False
@@ -1624,15 +1725,12 @@ async def run_realtime_sessions(
                     if readiness is not None:
                         readiness.finish_turn()
                 queued_for_view = None
-            if readiness is not None and handoff_messages and pending_observation:
-                # A follow-up for the same invitation may still supply its requested pose.
-                readiness.begin_turn()
             sender = asyncio.create_task(send_realtime_inputs(
                 session, canvas, camera, stop_event, event_log=event_log,
                 include_character=include_character,
                 text_input=text_input, report_placement=mode == "co-photo" and not args.prompt,
-                observation_requires_camera=not args.prompt,
-                terminal=terminal, readiness=readiness, speech_output=speech_queue.output,
+                terminal=terminal, readiness=readiness,
+                observation_interval=2.0 if camera is not None and not args.prompt else None,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 session, stop_event, canvas, speech_queue, verbose=args.verbose,
@@ -1652,7 +1750,6 @@ async def run_realtime_sessions(
             )
             if switched and hasattr(session, "handoff_messages"):
                 handoff_messages = session.handoff_messages()
-                pending_observation = getattr(session, "pending_observation", None)
         finally:
             # The camera and console stay open across sessions.
             for task in tasks:
@@ -1714,7 +1811,7 @@ async def run_probe(
         if mic_device and mic_device.isdecimal():
             mic_device = int(mic_device)
     stop_event = threading.Event()
-    occlusion = None if args.no_camera else PersonOcclusion(SceneSegmenter)
+    occlusion = None if args.no_camera else PersonOcclusion(lambda: SceneSegmenter(fixed_camera=not args.moving_camera))
     canvas = CanvasSource(
         args.sprite_catalog,
         args.canvas_width,
@@ -1760,6 +1857,7 @@ async def run_probe(
                 canvas_height=args.canvas_height, camera_enabled=camera is not None,
                 camera_device=camera.device_index if camera and not camera.device_name else None,
                 camera_description=camera.display_label if camera else None,
+                fixed_camera=not args.moving_camera if camera is not None else None,
             )
 
         print(f"[api] {direct_api.ENDPOINT}", flush=True)
@@ -1796,7 +1894,7 @@ async def run_probe(
             raise canvas.error
 
 
-def parse_args(argv=None, *, default_catalog: Path = DEFAULT_SPRITE_CATALOG) -> argparse.Namespace:
+def parse_args(argv=None, *, default_catalog: Path = WHITE_DRAGON_CATALOG) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Interactive photo guidance using text, camera frames and the DeepSeek API."
     )
@@ -1824,6 +1922,8 @@ def parse_args(argv=None, *, default_catalog: Path = DEFAULT_SPRITE_CATALOG) -> 
         help="send a blank frame in guidance, or the character canvas in co-photo/custom",
     )
     parser.add_argument("--no-preview", action="store_true", help="hide canvas preview")
+    parser.add_argument("--moving-camera", action="store_true",
+                        help="update furniture and depth continuously for a handheld or moving camera")
     parser.add_argument(
         "--tts", action=argparse.BooleanOptionalAction, default=None,
         help="speak English with AssemblyAI and Mandarin with Edge Xiaoyi (default: on)",
@@ -1853,7 +1953,7 @@ def parse_args(argv=None, *, default_catalog: Path = DEFAULT_SPRITE_CATALOG) -> 
 
 
 def main(argv=None) -> int:
-    args = parse_args(argv, default_catalog=WHITE_DRAGON_CATALOG)
+    args = parse_args(argv)
     log_path = args.log_file or PROJECT_ROOT / "experiments/runtime" / (
         f"frontend-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
     )

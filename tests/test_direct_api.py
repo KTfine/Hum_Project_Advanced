@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -9,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from photo_assistant.api.session import DeepSeekClient, DirectSession, ENDPOINT
-from photo_assistant.prompts import CO_PHOTO_COMMAND_PROMPT, OBSERVATION_MARKER, PHOTO_GUIDANCE_PROMPT
 
 
 async def read_until(session, kind):
@@ -21,14 +21,94 @@ async def read_until(session, kind):
 
 
 class DirectApiTests(unittest.IsolatedAsyncioTestCase):
-    async def test_observation_starts_only_after_a_goal_and_close_cancels_it(self):
-        started, cancelled = asyncio.Event(), asyncio.Event()
-        messages_seen = []
+    async def test_feedback_turns_keep_only_the_latest_spoken_observation_and_do_not_use_user_quota(self):
+        calls = []
+        replies = iter(("<speak:好。>", "<speak:第一条观察。>", "<blank>",
+                       "<capture><speak:第二条观察。>", "<speak:是的。>"))
 
         async def complete(messages, *, on_delta):
-            messages_seen.append(messages)
-            if len(messages_seen) == 1:
-                return SimpleNamespace(text="<speak:往左一点。><wait:feedback>", metadata={})
+            calls.append(messages)
+            reply = next(replies)
+            on_delta(reply)
+            return SimpleNamespace(text=reply, metadata={})
+
+        provider = AsyncMock()
+        provider.complete.side_effect = complete
+        session = DirectSession("guidance", provider, max_turns=2)
+        self.addAsyncCleanup(session.close)
+        jpeg = b"\xff\xd8\xffA"
+        self.assertFalse(session.can_observe)
+        self.assertFalse(session.submit_observation(jpeg))
+        session.submit_frame(jpeg, "看看我与窗户的位置。")
+        self.assertFalse(session.can_observe)
+        self.assertNotIn("turn_source", await read_until(session, "response.done"))
+        original = session.handoff_messages()
+        for i in range(3):
+            self.assertTrue(session.can_observe)
+            self.assertFalse(session.submit_observation(b""))
+            self.assertTrue(session.submit_observation(jpeg, placement={"x": .25}))
+            delta = await read_until(session, "response.output.delta")
+            self.assertEqual(delta["turn_source"], "observation")
+            # The provider has finished, but the frontend has not drained this response yet.
+            self.assertFalse(session.can_observe)
+            self.assertFalse(session.submit_observation(jpeg))
+            done = await read_until(session, "response.done")
+            self.assertEqual(done["turn_source"], "observation")
+            self.assertEqual(done["response_id"], delta["response_id"])
+            self.assertEqual(original, session.handoff_messages())
+            blocks = calls[-1][-1]["content"]
+            self.assertIn("<blank>", blocks[0]["text"])
+            self.assertEqual(blocks[1]["type"], "image_url")
+            self.assertIn('"x": 0.25', blocks[2]["text"])
+            if i:
+                self.assertEqual(calls[-1][-2]["content"], "第一条观察。")
+        self.assertEqual(len(calls[2]), len(calls[3]))
+        session.submit_frame(None, "刚才说的什么？")
+        self.assertNotIn("turn_source", await read_until(session, "response.done"))
+        self.assertEqual(calls[-1][-2], {"role": "assistant", "content": "第二条观察。"})
+        self.assertEqual(session.handoff_messages()[0]["content"], "刚才说的什么？")
+        await session.close()
+        self.assertFalse(session.can_observe)
+        self.assertFalse(session.submit_observation(jpeg))
+
+    async def test_user_interrupts_observation_started_from_mode_handoff(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        calls = []
+        async def complete(messages, *, on_delta):
+            calls.append(messages)
+            if len(calls) == 1:
+                on_delta("<speak:过时反馈>")
+                started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.set()
+            on_delta("<speak:好。>")
+            return SimpleNamespace(text="<speak:好。>", metadata={})
+
+        provider = AsyncMock()
+        provider.complete.side_effect = complete
+        handoff = ({"role": "user", "content": "过来和我合照。"},
+                   {"role": "assistant", "content": "<mode:co-photo>"})
+        session = DirectSession("co-photo", provider, handoff_messages=handoff)
+        self.addAsyncCleanup(session.close)
+        self.assertTrue(session.can_observe)
+        self.assertTrue(session.submit_observation(b"\xff\xd8\xffB"))
+        await asyncio.wait_for(started.wait(), 2)
+        session.submit_frame(None, "先不说构图。")
+        interrupted = await session.recv()
+        self.assertEqual((interrupted["type"], interrupted["turn_source"]), ("response.interrupted", "observation"))
+        delta = await session.recv()
+        self.assertNotIn("turn_source", delta)
+        self.assertEqual(delta["text"], "<speak:好。>")
+        await read_until(session, "response.done")
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(calls[1][1:-1], list(handoff))
+
+    async def test_close_cancels_inflight_request(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def complete(messages, *, on_delta):
             started.set()
             try:
                 await asyncio.Future()
@@ -37,29 +117,39 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
 
         provider = AsyncMock()
         provider.complete.side_effect = complete
-        session = DirectSession("guidance", provider, managed_observations=True)
+        session = DirectSession("guidance", provider)
         self.addAsyncCleanup(session.close)
         jpeg = b"\xff\xd8\xffX"
-        session.submit_frame(jpeg)
-        with patch("photo_assistant.api.session.time", monotonic=lambda: 100.0):
-            session.submit_frame(jpeg, "指导我摆姿势")
-        await read_until(session, "response.done")
-        with patch("photo_assistant.api.session.time", monotonic=lambda: 101.99):
-            session.submit_frame(jpeg)
-        await asyncio.sleep(0)
-        self.assertEqual(len(messages_seen), 1)
-        with patch("photo_assistant.api.session.time", monotonic=lambda: 102.0):
-            session.submit_frame(jpeg)
+        session.submit_frame(jpeg, "指导我摆姿势")
         await asyncio.wait_for(started.wait(), 2)
-        self.assertEqual([m["role"] for m in messages_seen[1]],
-                         ["system", "user", "assistant", "user"])
-        self.assertFalse(messages_seen[0][-1]["content"][0]["text"].startswith(OBSERVATION_MARKER))
-        self.assertTrue(messages_seen[1][-1]["content"][0]["text"].startswith(OBSERVATION_MARKER))
-        for template in (PHOTO_GUIDANCE_PROMPT, CO_PHOTO_COMMAND_PROMPT):
-            self.assertIn(OBSERVATION_MARKER, template)
         await session.close()
         self.assertTrue(cancelled.is_set())
         provider.__aexit__.assert_awaited_once()
+
+    async def test_new_mode_uses_last_exchange_only_on_next_user_input(self):
+        provider = AsyncMock()
+        provider.complete.return_value = SimpleNamespace(text="<capture>", metadata={})
+        previous = ({"role": "user", "content": "和我合照。"},
+                    {"role": "assistant", "content": "<mode:co-photo>"})
+        session = DirectSession("co-photo", provider, handoff_messages=previous)
+        self.addAsyncCleanup(session.close)
+        jpeg = b"\xff\xd8\xffA"
+        for text in (None, "", " "):
+            session.submit_frame(jpeg, text)
+        await asyncio.sleep(0)
+        provider.complete.assert_not_awaited()
+        self.assertEqual(session.handoff_messages(), previous)
+        session.submit_frame(jpeg, "拍吧。")
+        await read_until(session, "response.done")
+        with patch("time.monotonic", return_value=time.monotonic() + 60):
+            session.submit_frame(jpeg)
+        await asyncio.sleep(0)
+        provider.complete.assert_awaited_once()
+        messages, = provider.complete.await_args.args
+        self.assertEqual(messages[1:3], list(previous))
+        self.assertEqual(session.handoff_messages(), (
+            {"role": "user", "content": "拍吧。"}, {"role": "assistant", "content": "<capture>"},
+        ))
 
     async def test_single_remote_request_streams_the_goal_and_latest_jpeg(self):
         requests = []
@@ -147,7 +237,7 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("没有可用的摄像头画面", blocks[1]["text"])
         self.assertEqual(session.handoff_messages()[0], {"role": "user", "content": question})
 
-    async def test_cached_and_observed_frames_send_their_own_placement(self):
+    async def test_each_user_request_sends_placement_for_its_own_frame(self):
         requests = []
 
         def provider(request):
@@ -168,23 +258,23 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
         session.submit_frame(first, placement=initial)
         session.submit_frame(None, "原地变大一点")
         await read_until(session, "response.done")
-        with patch("photo_assistant.api.session.time", monotonic=lambda: float("inf")):
-            session.submit_frame(next_frame, placement=updated)
+        session.submit_frame(next_frame, placement=updated)
+        session.submit_frame(None, "现在多大？")
         await read_until(session, "response.done")
         # A fresh frame without a character must clear the previous placement.
         session.submit_frame(first, "看这张")
         await read_until(session, "response.done")
 
-        goal, observation, last = (messages[-1]["content"] for messages in requests)
+        goal, followup, last = (messages[-1]["content"] for messages in requests)
         self.assertEqual(goal[0]["text"], "原地变大一点")
-        self.assertTrue(observation[0]["text"].startswith(OBSERVATION_MARKER))
-        for blocks, jpeg, expected in ((goal, first, initial), (observation, next_frame, updated)):
+        self.assertEqual(followup[0]["text"], "现在多大？")
+        for blocks, jpeg, expected in ((goal, first, initial), (followup, next_frame, updated)):
             self.assertEqual(blocks[1]["image_url"]["url"],
                              "data:image/jpeg;base64," + base64.b64encode(jpeg).decode())
             self.assertEqual(blocks[2]["type"], "text")
             prefix, data = blocks[2]["text"].split("：")
-            self.assertEqual(prefix, "本帧角色脚点和倍率")
+            self.assertEqual(prefix, "随图的角色与场景信息")
             self.assertEqual(json.loads(data), expected)
         self.assertEqual(len(last), 2)
         self.assertEqual(requests[-1][1]["content"], goal)
-        self.assertEqual(requests[-1][3]["content"], observation)
+        self.assertEqual(requests[-1][3]["content"], followup)

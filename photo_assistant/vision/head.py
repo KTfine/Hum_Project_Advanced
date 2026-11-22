@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .perspective import PersonSilhouettes
+
 
 @dataclass(frozen=True)
 class FaceReference:
@@ -15,18 +17,19 @@ class FaceReference:
     width: float
 
 
-def measure_face(frame_bgr, person_mask: np.ndarray | None) -> FaceReference | None:
+def measure_face(frame_bgr, person_mask: np.ndarray | None, *,
+                 silhouettes: PersonSilhouettes | None = None) -> FaceReference | None:
     """Return the largest person's measurable face in a half- or full-body shot."""
     if person_mask is None or person_mask.ndim != 2 or not person_mask.size:
         return None
     if frame_bgr is not None and frame_bgr.shape[:2] != person_mask.shape:
         return None
-    step = max(1, (max(person_mask.shape) + 383) // 384)
-    binary = (person_mask[::step, ::step] >= 0.5).astype(np.uint8)
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    if silhouettes is None:
+        silhouettes = PersonSilhouettes.from_mask(person_mask)
+    step, labels, stats = silhouettes.stride, silhouettes.labels, silhouettes.stats
     for label in np.argsort(-stats[1:, cv2.CC_STAT_AREA]) + 1:
         left, top, width, height, area = map(int, stats[label])
-        if height < max(12, 0.15 * binary.shape[0]) or area < 0.003 * binary.size:
+        if height < max(12, 0.15 * labels.shape[0]) or area < 0.003 * labels.size:
             continue
         body = labels[top:top + height, left:left + width] == label
         # A narrower neck must follow the widest part of the head and give
@@ -52,7 +55,7 @@ def measure_face(frame_bgr, person_mask: np.ndarray | None) -> FaceReference | N
         # An arm raised alongside the face can belong to the same silhouette.
         # The face must occupy a coherent horizontal run at the expected width.
         start, end = max(edges, key=lambda pair: pair[1] - pair[0])
-        if end - start < 0.73 * span or left + start == 0 or left + end >= binary.shape[1]:
+        if end - start < 0.73 * span or left + start == 0 or left + end >= labels.shape[1]:
             continue
         # Cheeks span about 79% of the hair-and-ears silhouette in our
         # full-length, waist-up and close camera reference frames.

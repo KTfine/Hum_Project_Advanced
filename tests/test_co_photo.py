@@ -12,7 +12,7 @@ import numpy as np
 
 from photo_assistant.protocol import StreamingCommandParser
 import photo_assistant.client as client
-from photo_assistant.avatar.pose import AvatarPose, DEFAULT_SPRITE_CATALOG
+from photo_assistant.avatar.pose import AvatarPose, WHITE_DRAGON_CATALOG
 from tests.avatar_fixture import rendered_avatar
 
 
@@ -31,7 +31,7 @@ class ModeTests(unittest.TestCase):
         self.rendered = np.full((10, 10, 4), (100, 200, 250, 128), dtype=np.uint8)
         self.enterContext(rendered_avatar(self.rendered))
         self.stop = threading.Event()
-        self.canvas = client.CanvasSource(DEFAULT_SPRITE_CATALOG, 200, 100, 95,
+        self.canvas = client.CanvasSource(WHITE_DRAGON_CATALOG, 200, 100, 95,
                                           self.stop, preview=False)
         self.canvas.start()
         self.selection = client.ModeSelection()
@@ -124,7 +124,7 @@ class ModeTests(unittest.TestCase):
 
     def test_person_occludes_clipped_avatar_in_preview_model_image_and_shutter_frame(self):
         worker = Mock(spec=client.PersonOcclusion)
-        self.canvas = client.CanvasSource(DEFAULT_SPRITE_CATALOG, 200, 100, 95,
+        self.canvas = client.CanvasSource(WHITE_DRAGON_CATALOG, 200, 100, 95,
                                          self.stop, preview=False, scene_layers={'person': worker})
         self.canvas.start()
         source = client.CameraSource(0, self.stop, person_occlusion=worker)
@@ -141,16 +141,19 @@ class ModeTests(unittest.TestCase):
         worker.latest.return_value = None
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), capture_raw)
 
-        # The worker is one frame behind. The preview must use its matched
-        # image and mask, while the shutter segments the newly captured frame.
+        # The worker is one frame behind. Preview applies the mask to the live
+        # background, the model sees the matched pair, and shutter gets its own mask.
         mask = np.zeros((100, 100), np.float32)
         mask[:, :2] = 1
         mask[:, 2] = 0.5
         worker.latest.return_value = (preview_raw, mask)
+        expected_preview = capture_raw.copy()
+        expected_preview[40:50, 2] = 130
+        expected_preview[40:50, 3:5] = 200
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), expected_preview)
         expected = preview_raw.copy()
         expected[40:50, 2] = 110
         expected[40:50, 3:5] = 200
-        np.testing.assert_array_equal(self.canvas.render_preview_frame(), expected)
         _, jpeg = cv2.imencode('.jpg', expected, [cv2.IMWRITE_JPEG_QUALITY, 95])
         self.assertEqual(self.canvas.latest_jpeg(queued), jpeg.tobytes())
 

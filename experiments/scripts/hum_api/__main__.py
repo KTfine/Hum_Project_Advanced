@@ -94,7 +94,6 @@ async def run(args):
                 if not text:
                     continue
             pending = False
-            system = session.system_prompt
             try:
                 images = [Image.from_path(p) for p in paths]
                 result = await session.ask(text or '', images=images,
@@ -104,7 +103,7 @@ async def run(args):
                 print(f'\n[error] {exc}', file=sys.stderr)
             except asyncio.CancelledError as exc:
                 if hasattr(exc, 'result'):
-                    save({'event': 'turn', 'system_prompt': system, 'input_text': text or '',
+                    save({'event': 'turn', 'system_prompt': session.last_system_prompt, 'input_text': text or '',
                           'output': exc.result.text, **exc.result.metadata})
                 raise
             except (OSError, ValueError) as exc:
@@ -114,7 +113,7 @@ async def run(args):
                     return 1
                 continue
             print()
-            save({'event': 'turn', 'system_prompt': system, 'input_text': text or '',
+            save({'event': 'turn', 'system_prompt': session.last_system_prompt, 'input_text': text or '',
                   'output': result.text, **result.metadata})
             print(f'[mode] {session.mode}; [status] {result.metadata["status"]}', file=sys.stderr)
             paths = []

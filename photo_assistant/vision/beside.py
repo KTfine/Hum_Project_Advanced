@@ -7,7 +7,7 @@ import numpy as np
 
 from .head import FaceReference
 from .perspective import (
-    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, PersonReference,
+    PORTRAIT_CHEEK_RATIO, PORTRAIT_FACE_DROP, PersonReference, PersonSilhouettes,
     matched_standing_height_px, person_reference, silhouette_reference,
     standing_height_px as project_height,
 )
@@ -21,7 +21,7 @@ class SidePlacement:
 
 
 def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height, reference,
-                  face_box, head, preferred_x, scene):
+                  face_box, head, preferred_x, scene, silhouettes):
     """Place both soles on the same ground plane and choose the nearest clear horizontal slot."""
     height, width = person_mask.shape
     step = max(1, (max(height, width) + 255) // 256)
@@ -115,7 +115,10 @@ def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height
     if head is not None:
         person_x = head.center_x / step
     else:
-        _, _, stats, centers = cv2.connectedComponentsWithStats(person)
+        if step == silhouettes.stride:
+            stats, centers = silhouettes.stats, silhouettes.centers
+        else:
+            _, _, stats, centers = cv2.connectedComponentsWithStats(person)
         if len(stats) < 2:
             return None
         # The normalized foot and standing height identify this particular person.
@@ -136,7 +139,7 @@ def _stand_beside(person_mask, foreground_masks, sprite, anchor, standing_height
     x = float(anchors[best] * step / width)
     if matched is None:
         # The renderer chooses its unmeasured ground reference at the character's x.
-        render_ref = person_reference(person_mask, x, y)
+        render_ref = silhouettes.reference_at(x, y)
         base = project_height(render_ref, height, y, fallback_height=0.72 * height)
     scale = size / base
     return SidePlacement(x, y, scale) if 0.1 <= scale <= 3 else None
@@ -296,18 +299,20 @@ def side_placement(
     head: FaceReference | None = None,
     preferred_x: float | None = None,
     subject_reference: PersonReference | None = None,
-    scene=None,
+    scene=None, silhouettes: PersonSilhouettes | None = None,
 ) -> SidePlacement | None:
     """Use adjacent floor space for full-body photos, and side occlusion for portraits."""
-    if person_mask is not None and person_mask.ndim == 2 and person_mask.size:
+    if silhouettes is None:
+        silhouettes = PersonSilhouettes.from_mask(person_mask)
+    if silhouettes is not None:
         if subject_reference is None:
             height, width = person_mask.shape
             subject_x = head.center_x / width if head is not None else 0.5
             subject_y = head.center_y / height if head is not None else 0.95
-            subject_reference = person_reference(person_mask, subject_x, subject_y)
+            subject_reference = silhouettes.reference_at(subject_x, subject_y)
         if subject_reference is not None and not subject_reference.estimated:
             return _stand_beside(person_mask, foreground_masks, sprite_bgra, anchor_px, standing_height_px,
-                                 subject_reference, face_box_px, head, preferred_x, scene)
+                                 subject_reference, face_box_px, head, preferred_x, scene, silhouettes)
     else:
         subject_reference = None
     if not foreground_masks:
@@ -340,7 +345,10 @@ def side_placement(
         face_row = int(np.clip(round(head.center_y / step), 0, rows - 1))
     people = []
     for person, mask in sorted(masks, key=lambda item: not item[0]):
-        _, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+        if person and step == silhouettes.stride:
+            labels, stats = silhouettes.labels, silhouettes.stats
+        else:
+            _, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
         for label in np.argsort(-stats[1:, cv2.CC_STAT_AREA]) + 1:
             left, top, width, height, area = map(int, stats[label])
             if height < max(8, rows * 0.16) or width < 3 or area < 0.003 * rows * cols:
@@ -355,7 +363,8 @@ def side_placement(
                 if person:
                     flank_top = min(flank_top, (head.center_y + 0.85 * head.width) / step)
             elif person:
-                reference = silhouette_reference(labels, label, stats[label], frame_height)
+                reference = (silhouettes.body_references[label] if step == silhouettes.stride
+                             else silhouette_reference(labels, label, stats[label], frame_height))
                 if reference is None:
                     continue
                 if any(r.estimated and area < 0.22 * a for _, r, a in people):
@@ -364,7 +373,7 @@ def side_placement(
             else:
                 # An obstacle can still occlude the character when the person's
                 # own flank is blocked. Retain that person's ground depth.
-                reference = person_reference(person_mask, center_x, (top + height) / frame_height)
+                reference = person_reference(person_mask, center_x, (top + height) / frame_height, silhouettes=silhouettes)
                 if reference is None and people:
                     reference = min(people, key=lambda item: abs(item[0] - center_x))[1]
             best_score, placement = -np.inf, None
@@ -399,7 +408,7 @@ def side_placement(
                 if score <= best_score:
                     continue
                 x, y = float(ax * step / shape[1]), float(foot * step / shape[0])
-                ref = subject_reference if portrait else person_reference(person_mask, x, y)
+                ref = subject_reference if portrait else person_reference(person_mask, x, y, silhouettes=silhouettes)
                 if ref is not None and not portrait and y > ref.foot_y - 0.085 * ref.height:
                     continue
                 base = project_height(ref, shape[0], y, fallback_height=0.72 * shape[0],

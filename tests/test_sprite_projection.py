@@ -88,6 +88,24 @@ class CameraProjectionTests(unittest.TestCase):
         self.select(self.tags[2])
         self.assertEqual(self.bounds(self.preview()), (154, 95, 167, 180))
 
+    def test_still_projection_reuses_only_the_artwork_and_geometry(self):
+        rng = np.random.default_rng(17)
+        art = rng.integers(0, 256, (29, 19, 4), np.uint8)
+        background = rng.integers(0, 256, (72, 96, 3), np.uint8)
+        cover = np.zeros(background.shape[:2], np.float32)
+        cover[:, :48] = .8
+        args = ((9, 25), .5, .8, 1.5, -15)
+        self.canvas._draw_sprite(background.copy(), art, *args, ())
+        with patch.object(cv2, "warpAffine", wraps=cv2.warpAffine) as warp:
+            cached = background.copy()
+            self.assertTrue(self.canvas._draw_sprite(cached, art, *args, (cover,)))
+            warp.assert_not_called()
+            # A different PNG with identical pixels forces a fresh projection.
+            fresh = background.copy()
+            self.canvas._draw_sprite(fresh, art.copy(), *args, (cover,))
+            self.assertEqual(warp.call_count, 1)
+        np.testing.assert_array_equal(cached, fresh)
+
     def test_shutter_uses_its_own_mask_and_pose_while_a_teleport_is_dispatched(self):
         self.preview()
         shutter_mask = np.zeros_like(self.mask)

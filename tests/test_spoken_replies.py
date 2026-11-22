@@ -100,20 +100,26 @@ class SpokenReplyTests(unittest.IsolatedAsyncioTestCase):
                 queue.read_aloud(final=True)
                 self.assertEqual([args.args[0] for args in output.say.call_args_list], clauses)
 
-    async def test_ready_message_reaches_output_once(self):
+    async def test_idle_ready_event_updates_status_without_encoding_an_image(self):
         stop = threading.Event()
         session = Mock()
-        session.submit_frame.side_effect = lambda *_: stop.set()
-        readiness = Mock(last_action_succeeded=None)
-        readiness.observe.return_value = "我在桌沿坐好了。"
-        output = Mock()
+        session.submit_frame.side_effect = lambda *args, **kwargs: stop.set()
+        readiness = Mock(last_action_succeeded=True)
+        readiness.observe.return_value = "action"
+        terminal = Mock()
         canvas = Mock()
-        canvas.jpeg_with_placement.return_value = (b"frame", {})
+        canvas.compose_view.return_value = object(), {"pose_settled": True}, object()
         with patch.object(client.asyncio, "sleep", new_callable=AsyncMock):
             await client.send_realtime_inputs(
-                session, canvas, None, stop, terminal=Mock(), readiness=readiness, speech_output=output,
+                session, canvas, Mock(), stop, terminal=terminal, readiness=readiness, report_placement=True,
             )
-        output.say.assert_called_once_with("我在桌沿坐好了。")
+        terminal.line.assert_called_once_with("[合照] 角色已就位。")
+        terminal.speech.assert_not_called()
+        session.submit_frame.assert_called_once_with(
+            None, None, placement={"pose_settled": True, "readiness_event": "action",
+                                      "last_action_succeeded": True},
+        )
+        canvas.encode_jpeg.assert_not_called()
 
     async def test_launcher_config_and_microphone_gate_use_one_player(self):
         for settings, switches, enabled in [

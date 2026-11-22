@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import redirect_stdout, redirect_stderr
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import httpx
 
 from experiments.scripts.hum_api import ApiError, DeepSeekClient, Image, PhotoSession, build_prompt
 from experiments.scripts.hum_api.__main__ import parse_args, run
-from photo_assistant.avatar.pose import AvatarPose, DEFAULT_SPRITE_CATALOG, load_pose_catalog
+from photo_assistant.avatar.pose import AvatarPose, WHITE_DRAGON_CATALOG, load_pose_catalog
 
 
 def event(text='', finish=None, **extra):
@@ -62,15 +63,20 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(headers, ['Bearer local-fixture', 'Bearer explicit-fixture'])
 
-    async def test_commands_execute_on_closure_across_utf8_chunks_before_done(self):
-        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        default_art = load_pose_catalog(DEFAULT_SPRITE_CATALOG).entry(AvatarPose())
+    def make_catalog(self, folder, pose):
+        bundled = load_pose_catalog(WHITE_DRAGON_CATALOG)
+        default_art = bundled.entry(bundled.default_pose)
         (folder / 'only.png').write_bytes(default_art.path.read_bytes())
         catalog = folder / 'catalog.json'
         catalog.write_text(json.dumps({'sprites': [{
-            'file': 'only.png', 'tags': vars(AvatarPose()), 'anchor_px': default_art.anchor_px,
+            'file': 'only.png', 'tags': vars(pose), 'anchor_px': default_art.anchor_px,
             'standing_height_px': default_art.standing_height_px,
         }]}), encoding='utf-8')
+        return catalog
+
+    async def test_commands_execute_on_closure_across_utf8_chunks_before_done(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        catalog = self.make_catalog(folder, AvatarPose())
         seen = []
         first = event('<speak:你好')
         second = event('。><teleport:x=0.6,y=0.95,scale=1.2>'
@@ -176,11 +182,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stream.closed)
 
     async def test_custom_prompt_is_literal_and_does_not_switch(self):
-        async with DeepSeekClient('unit-secret', transport=httpx.MockTransport(lambda r: response('<mode:co-photo>'))) as client:
-            session = PhotoSession(client, system_prompt='literal {my_json}', max_turns=1)
+        def provider(request):
+            self.assertEqual(json.loads(request.content)['messages'][0]['content'], 'literal {my_json}')
+            return response('<mode:guidance>')
+        async with DeepSeekClient('unit-secret', transport=httpx.MockTransport(provider)) as client:
+            session = PhotoSession(client, system_prompt='literal {my_json}', max_turns=1,
+                                   mode='co-photo', sprite_catalog=Path('missing-catalog.json'))
             await session.ask('x')
             self.assertEqual(session.system_prompt, 'literal {my_json}')
-            self.assertEqual(session.mode, 'guidance')
+            self.assertEqual(session.mode, 'co-photo')
             with self.assertRaises(ValueError):
                 await session.ask('too many')
             session.reset()
@@ -223,24 +233,75 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapted.commands[0].kind, 'speak')
         self.assertGreater(adapted.metadata['plain_speech_fragments'], 0)
 
-    async def test_cli_logs_system_hash_status_but_not_image_bytes_or_key(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / 'run.jsonl'
-            real = DeepSeekClient
-            factory = lambda **kw: real('unit-secret', transport=httpx.MockTransport(lambda r: response('<speak:好>')), **kw)
-            with patch('experiments.scripts.hum_api.__main__.DeepSeekClient', factory), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                code = await run(parse_args(['--text','hello','--log-file',str(log)]))
-            data = log.read_text(encoding='utf-8')
-            self.assertEqual(code, 0)
-            self.assertNotIn('unit-secret', data)
-            last = json.loads(data.splitlines()[-1])
-            self.assertEqual(last['status'], 'ok')
-            self.assertEqual(len(last['system_sha256']), 64)
+    async def test_cli_uses_one_catalog_per_turn_and_reloads_it_next_turn(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        first, second = AvatarPose(), AvatarPose(face='高冷表情')
+        catalog = self.make_catalog(folder, first)
+        log = folder / 'run.jsonl'
+        systems = []
+
+        def provider(request):
+            systems.append(json.loads(request.content)['messages'][0]['content'])
+            if len(systems) == 1:
+                document = json.loads(catalog.read_text(encoding='utf-8'))
+                document['sprites'][0]['tags'] = vars(second)
+                catalog.write_text(json.dumps(document), encoding='utf-8')
+            return response(first.command(), second.command())
+
+        def factory(**options):
+            return DeepSeekClient('unit-secret', transport=httpx.MockTransport(provider), **options)
+
+        args = parse_args(['--text', 'first', '--interactive', '--mode', 'co-photo',
+                           '--sprite-catalog', str(catalog), '--log-file', str(log)])
+        with patch('experiments.scripts.hum_api.__main__.DeepSeekClient', factory), \
+             patch('experiments.scripts.hum_api.session.load_pose_catalog', wraps=load_pose_catalog) as load, \
+             patch('builtins.input', side_effect=['next', '/quit']), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(await run(args), 0)
+        rows = map(json.loads, log.read_text(encoding='utf-8').splitlines())
+        turns = [row for row in rows if row['event'] == 'turn']
+        self.assertEqual(load.call_count, 2)
+        self.assertEqual([row['system_prompt'] for row in turns], systems)
+        for row, pose in zip(turns, (first, second), strict=True):
+            self.assertIn(pose.command(), row['system_prompt'])
+            self.assertEqual([command['params'] for command in row['commands']], [vars(pose)])
+
+    async def test_cli_logs_sent_system_and_status_for_success_failure_and_cancellation(self):
+        for status in ('ok', 'error', 'cancelled'):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                log = Path(tmp) / 'run.jsonl'
+                systems = []
+
+                def provider(request):
+                    systems.append(json.loads(request.content)['messages'][0]['content'])
+                    if status == 'cancelled':
+                        raise asyncio.CancelledError()
+                    if status == 'error':
+                        return httpx.Response(401)
+                    return response('<speak:好>')
+
+                def factory(**options):
+                    return DeepSeekClient('unit-secret', transport=httpx.MockTransport(provider), **options)
+
+                args = parse_args(['--text', 'hello', '--log-file', str(log)])
+                with patch('experiments.scripts.hum_api.__main__.DeepSeekClient', factory), \
+                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    if status == 'cancelled':
+                        with self.assertRaises(asyncio.CancelledError):
+                            await run(args)
+                    else:
+                        self.assertEqual(await run(args), 0 if status == 'ok' else 1)
+                data = log.read_text(encoding='utf-8')
+                self.assertNotIn('unit-secret', data)
+                row = json.loads(data.splitlines()[-1])
+                self.assertEqual(row['status'], status)
+                self.assertEqual(systems, [row['system_prompt']])
+                self.assertEqual(row['system_sha256'], hashlib.sha256(systems[0].encode()).hexdigest())
 
 
 class PromptTests(unittest.TestCase):
     def test_guidance_stays_free_of_pose_context_and_audio_claims(self):
-        text = build_prompt(character_state={'x':.1})
+        text = build_prompt(character_state={'unused': object()})
         self.assertNotIn('<tachie:', text)
         self.assertNotIn('麦克风', text)
         self.assertNotIn('初始角色状态', text)

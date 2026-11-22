@@ -8,7 +8,6 @@ from .pose import AvatarPose, PoseCatalog
 
 
 TELEPORT_EFFECT_SECONDS = 0.35
-_DEPTH_SCALE = {"alongside": 1.0, "near": 1.35, "far": 0.70}
 
 
 @dataclass(frozen=True)
@@ -19,7 +18,6 @@ class AvatarState:
     rotation: float
     layer_index: int = 0
     pose: AvatarPose = AvatarPose()
-    camera_depth_mode: str = "alongside"
 
 
 class AvatarController:
@@ -56,7 +54,7 @@ class AvatarController:
             return rendered_angle == self._target.rotation
 
     def render_state(self, now: float | None = None) -> tuple[AvatarState, bool, float]:
-        """Snapshot geometry including camera depth, automatic grounding and arrival progress."""
+        """Snapshot geometry, automatic grounding and arrival progress."""
         with self._lock:
             timestamp = time.monotonic() if now is None else now
             progress = min(1.0, max(0.0, (timestamp - self._teleported_at) / TELEPORT_EFFECT_SECONDS))
@@ -85,11 +83,7 @@ class AvatarController:
             if command.kind == "teleport":
                 destination = teleport_destination(params)
                 if destination is None:
-                    raise ValueError("传送需要绝对脚点 x、y（-2～3），可选倍率 scale（0.1～3）和 depth（near/far/alongside）")
-                depth = destination.pop("depth", None)
-                if depth is not None:
-                    destination["camera_depth_mode"] = depth
-                    destination.setdefault("scale", _DEPTH_SCALE[depth])
+                    raise ValueError("传送需要绝对脚点 x、y（-2～3），可选倍率 scale（0.1～3）")
                 self._target = replace(self._target, **destination)
                 self._follow_person_ground = False
                 self._teleported_at = timestamp

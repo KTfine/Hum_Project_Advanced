@@ -1,6 +1,7 @@
 """Estimate sprite standing height on the camera's ground plane from a person mask."""
 
 from dataclasses import dataclass
+from functools import cached_property
 
 import cv2
 import numpy as np
@@ -54,26 +55,53 @@ def silhouette_reference(labels, label, stats, frame_height):
     return PersonReference((top + full_height) / frame_height, full_height / frame_height, True)
 
 
-def person_reference(mask: np.ndarray | None, x: float, y: float) -> PersonReference | None:
+@dataclass
+class PersonSilhouettes:
+    """Components of one foreground mask, shared within one placement solve."""
+
+    shape: tuple[int, int]
+    stride: int
+    labels: np.ndarray
+    stats: np.ndarray
+    centers: np.ndarray
+
+    @classmethod
+    def from_mask(cls, mask: np.ndarray | None):
+        if mask is None or mask.ndim != 2 or not mask.size:
+            return None
+        stride = max(1, (max(mask.shape) + 383) // 384)
+        binary = (mask[::stride, ::stride] >= 0.5).astype(np.uint8)
+        _, labels, stats, centers = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        return cls(mask.shape, stride, labels, stats, centers)
+
+    @cached_property
+    def body_references(self):
+        return {label: silhouette_reference(self.labels, label, self.stats[label], self.shape[0] / self.stride)
+                for label in range(1, len(self.stats))}
+
+    @cached_property
+    def _references(self):
+        candidates = []
+        for label, ref in self.body_references.items():
+            if ref is not None:
+                center_x = self.centers[label, 0] * self.stride / self.shape[1]
+                candidates.append((int(self.stats[label, cv2.CC_STAT_AREA]), center_x, ref))
+        # Body fragments beside a large clipped portrait are poor depth references.
+        minimum_area = .22 * max((area for area, _, ref in candidates if ref.estimated), default=0)
+        return [(cx, ref) for area, cx, ref in candidates if area >= minimum_area]
+
+    def reference_at(self, x: float, y: float) -> PersonReference | None:
+        if not self._references:
+            return None
+        return min(self._references, key=lambda item: (abs(item[0] - x), abs(item[1].foot_y - y)))[1]
+
+
+def person_reference(mask: np.ndarray | None, x: float, y: float, *,
+                     silhouettes: PersonSilhouettes | None = None) -> PersonReference | None:
     """Choose an upright full-body or cropped torso reference near the sprite."""
-    if mask is None or mask.ndim != 2 or not mask.size:
-        return None
-    # The live segmentation model itself operates at 192 px. Sampling a large
-    # interpolated preview at bounded resolution keeps compositing inexpensive.
-    stride = max(1, (max(mask.shape) + 383) // 384)
-    binary = (mask[::stride, ::stride] >= 0.5).astype(np.uint8)
-    _, labels, stats, centers = cv2.connectedComponentsWithStats(binary, connectivity=8)
-    candidates = []
-    for label in range(1, len(stats)):
-        ref = silhouette_reference(labels, label, stats[label], mask.shape[0] / stride)
-        if ref is not None:
-            center_x = centers[label, 0] * stride / mask.shape[1]
-            candidates.append((int(stats[label, cv2.CC_STAT_AREA]), abs(center_x - x), abs(ref.foot_y - y), ref))
-    if not candidates:
-        return None
-    # Body fragments beside a large clipped portrait are poor depth references.
-    minimum_area = 0.22 * max((c[0] for c in candidates if c[3].estimated), default=0)
-    return min((c for c in candidates if c[0] >= minimum_area), key=lambda c: c[1:3])[3]
+    if silhouettes is None:
+        silhouettes = PersonSilhouettes.from_mask(mask)
+    return silhouettes.reference_at(x, y) if silhouettes is not None else None
 
 
 def matched_standing_height_px(face_width: float, sprite_face_width: float, sprite_height: float,

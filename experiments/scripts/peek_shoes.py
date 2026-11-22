@@ -89,11 +89,11 @@ def render_pair(plates, directory, prefix):
             canvas.configure_view(camera, show_character=True, entrance=canvas.entrance_state(camera))
             worker.submit(frame)
             worker.mask_for_capture(frame)
-            _, entrance = canvas.jpeg_with_placement(frame, include_character=True)
+            _, entrance = canvas.frame_with_placement(frame, include_character=True)
             peek, = StreamingCommandParser().feed(side, "<peek>")
             if canvas.apply_command(peek) is None:
                 raise RuntimeError(f"No feasible peek position on the {side} plate")
-            _, placement = canvas.jpeg_with_placement(frame, include_character=True)
+            _, placement = canvas.frame_with_placement(frame, include_character=True)
             name = f"{prefix}-{side}"
             PhotoCapture(camera, directory, canvas).save().rename(directory / f"{name}.png")
             info = dict(entrance=entrance, after=placement, state=asdict(canvas.controller.state_at()))

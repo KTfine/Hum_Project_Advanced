@@ -54,7 +54,7 @@ python -m experiments.scripts.hum_api --interactive
 | `--interactive` | 保持本进程历史 |
 | `--prompt-file` | 完整 UTF-8 system 文本，按字面使用，不填占位符 |
 | `--mode` | 默认 `guidance`，也可 `co-photo` |
-| `--sprite-catalog` | 合照会读取项目内的立绘标签库。此选项可指定自己的 JSON 图库。实验入口组装提示词和解析标签；角色渲染由实时客户端执行。 |
+| `--sprite-catalog` | 合照实验默认读取小白龙的立绘库，也可指定自己的 JSON 图库。实验工具将可用立绘写入提示词，并按同一图库校验模型返回的动作。[小白龙图库](../models/avatars/white_dragon/catalog.json) |
 | `--character-persona-file` / `--character-persona` | 指定 UTF-8 性格文件，或直接提供本次实验的性格文字。默认读取[角色性格.txt](../角色性格.txt)。 |
 | `--model` | 默认 `deepseek-flash`；更换后需确认图像能力 |
 | `--thinking` | `off / low / high / max`，默认 `low` |
@@ -121,7 +121,7 @@ asyncio.run(main())
 | `PhotoSession(..., system_prompt=...)` | 程序传入完整实验提示词 |
 | `DeepSeekClient.complete(messages, on_delta=...)` | 自行管理历史和目标；首条必须是文本 system |
 
-合照 UI 收到 `teleport` 事件后，一次应用参数中的绝对脚点 `x`、`y` 和可选的 `scale`。省略倍率时沿用当前值。紧随其后的 `capture` 应取新位置和大小的清晰立绘，传送特效仅在预览中播放。[动作参数与坐标](reference/command-protocol.md)
+合照 UI 收到 `teleport` 事件后，将角色脚点移到绝对坐标 `x`、`y`。运行时按新落点计算投影高度，省略 `scale` 时沿用当前大小倍率。回到真人身边用 `<follow>`。紧随移动指令的 `capture` 应取新位置和大小的清晰立绘，传送特效仅在预览中播放。[动作参数与坐标](reference/command-protocol.md)
 
 回调同步运行，应快速把任务放进队列；不要在里面做阻塞 TTS、图像识别或 UI 等待。每个 PhotoSession 同时只处理一轮。取消、超时、不完整流不提交历史；但已经回调的动作不能撤销，因此不自动重试。mode 回调表示请求，提交结果看成功返回后的 `session.mode` 或 `metadata.mode_after`。
 

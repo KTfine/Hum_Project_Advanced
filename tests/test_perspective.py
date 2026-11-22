@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import numpy as np
 
 from photo_assistant.vision.layers import SceneLayers
-from photo_assistant.vision.perspective import person_reference, standing_height_px
+from photo_assistant.vision.perspective import PersonSilhouettes, person_reference, standing_height_px
 
 
 class PerspectiveTests(unittest.TestCase):
@@ -31,8 +31,9 @@ class PerspectiveTests(unittest.TestCase):
     def test_nearest_complete_person_is_used_in_group(self):
         self.mask[60:140, 180:205] = 1
         self.mask[100, 160] = 1  # isolated noise
-        self.assertEqual(person_reference(self.mask, 0.65, 0.9).height, 0.4)
-        self.assertEqual(person_reference(self.mask, 0.15, 0.7).height, 0.75)
+        silhouettes = PersonSilhouettes.from_mask(self.mask)
+        self.assertEqual(silhouettes.reference_at(0.65, 0.9).height, 0.4)
+        self.assertEqual(silhouettes.reference_at(0.15, 0.7).height, 0.75)
 
     def test_empty_cropped_and_wide_silhouettes_use_default_depth_curve(self):
         self.mask[:] = 0

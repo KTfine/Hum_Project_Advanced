@@ -6,4 +6,6 @@
 
 在实验中向模型发送本地图片或订阅增量文字和指令，可直接使用 Python 接口 `DeepSeekClient`、`PhotoSession`。示例见[独立图文实验](api-experiments.md)。
 
-实时客户端首次收到拍摄目标后才向云端发送请求。成功回复后，它继续使用近期画面和对话判断是否需要指导。新文字输入会打断尚未完成的回复，优先处理新目标。从代码查看行为可读[实时会话](../photo_assistant/api/session.py)与[HTTP 流式客户端](../photo_assistant/api/client.py)。
+实时客户端收到键盘输入或语音转写时，优先提交用户的话和当时可用的画面。用户开始对话后，内置指导和合照模式每 2 秒有一次观察机会。会话空闲且有可用摄像头画面时，客户端编码最新画面的 JPEG 并发起观察，即使画面内容保持静止。模型忙或摄像头暂时没有画面时，本次机会直接跳过。下一次观察取当时的画面。无摄像头或使用自定义 `--prompt` 时，仍由用户输入发起请求。
+
+观察请求在日志中记为 `api.observation`，流式事件带有 `turn_source=observation`。新的用户输入可以打断正在生成的观察回复。指导模式发送实景，合照模式把立绘与实景合成，并附上同帧的角色位置信息。[实时会话](../photo_assistant/api/session.py) · [HTTP 流式客户端](../photo_assistant/api/client.py)

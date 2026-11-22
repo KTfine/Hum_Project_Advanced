@@ -15,7 +15,7 @@ DEFAULT_TRANSITION_MS = 350
 MIN_POSITION = -2.0
 MAX_POSITION = 3.0
 CHARACTER_ACTIONS = frozenset({"follow", "peek", "sit", "brace", "stand", "teleport", "tachie", "layer", "rotate"})
-_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait|sit|brace):"
+_PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|sit|brace):"
                         r"|<(blank|(?:capture|follow|peek|sit|brace|stand)(?=>))")
 _POSSIBLE_MARKUP = re.compile(r"<(?=[a-zA-Z/!?]|$)")
 _STARTERS = (
@@ -34,7 +34,6 @@ _STARTERS = (
     "<brace:",
     "<stand>",
     "<mode:",
-    "<wait:",
     "<blank>",
 )
 
@@ -45,17 +44,12 @@ class Command:
     params: dict[str, Any]
 
 
-def teleport_destination(params: Mapping[str, Any]) -> dict[str, float | str] | None:
+def teleport_destination(params: Mapping[str, Any]) -> dict[str, float] | None:
     """Read a complete absolute destination from a wire tag or a local command."""
-    if not isinstance(params, Mapping) or not {"x", "y"} <= params.keys() <= {"x", "y", "scale", "depth"}:
+    if not isinstance(params, Mapping) or not {"x", "y"} <= params.keys() <= {"x", "y", "scale"}:
         return None
-    destination: dict[str, float | str] = {}
+    destination = {}
     for key, raw in params.items():
-        if key == "depth":
-            if not isinstance(raw, str) or raw not in ("near", "far", "alongside"):
-                return None
-            destination[key] = raw
-            continue
         value = _finite_number(raw)
         low, high = (0.1, 3.0) if key == "scale" else (MIN_POSITION, MAX_POSITION)
         if value is None or not low <= value <= high:
@@ -268,9 +262,6 @@ def _parse_command(kind: str, body: str, *, parameterized: bool) -> Command | No
     if kind == "mode":
         mode = body.strip()
         return Command("mode", {"mode": mode}) if mode in {"guidance", "co-photo"} else None
-    if kind == "wait":
-        task = body.strip()
-        return Command("wait", {"task": task}) if task in {"feedback", "capture"} else None
     parts = [part.strip() for part in body.split(",")]
     mode = None
     if kind in {"rotate", "layer"}:
@@ -303,8 +294,9 @@ def _parse_command(kind: str, body: str, *, parameterized: bool) -> Command | No
             return Command("brace", {"x": x})
 
     if kind == "sit":
-        if values.keys() == {"table"} and values["table"] in {"near", "far"}:
-            return Command("sit", values)
+        distance = values.get("distance", values.get("table"))
+        if len(values) == 1 and distance in {"near", "far"}:
+            return Command("sit", {"distance": distance})
         if values.keys() == {"x", "y"}:
             x, y = _finite_number(values["x"]), _finite_number(values["y"])
             if x is not None and y is not None and 0 <= x <= 1 and 0 <= y <= 1:

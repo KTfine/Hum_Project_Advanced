@@ -1,7 +1,6 @@
 """Camera-space geometry shared by the preview, encoder and shutter."""
 
 from dataclasses import dataclass
-import math
 
 import numpy as np
 
@@ -32,22 +31,6 @@ class Placement:
             dx += ((left + right) / 2 - entry.anchor_px[0]) * dz
             dy += ((top + bottom) / 2 - entry.anchor_px[1]) * dz
         return abs(dx) <= 0.75 * head and abs(dy) <= 0.65 * head
-
-    @staticmethod
-    def portrait_foot(y, state, face, entry, sprite_scale, height):
-        """Use the visible faces if the requested foot would crop the companion's face."""
-        left, top, right, bottom = entry.face_box_px
-        ax, ay = entry.anchor_px
-        angle = math.radians(state.rotation)
-        sine, cosine = math.sin(angle), math.cos(angle)
-        offset_y = sprite_scale * (sine * ((left + right) / 2 - ax) + cosine * ((top + bottom) / 2 - ay))
-        radius = sprite_scale * (abs(sine) * (right - left) + abs(cosine) * (bottom - top)) / 2
-        center = y * height + offset_y
-        if radius <= center <= height - radius:
-            return y
-        padding = min(radius, height / 2)
-        beside = np.clip(face.center_y + 0.50 * face.width, padding, height - padding)
-        return float(np.clip((beside - offset_y) / height, -2, 3))
 
 
 @dataclass

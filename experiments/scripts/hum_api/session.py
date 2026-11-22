@@ -8,7 +8,7 @@ import hashlib
 import json
 import time
 
-from photo_assistant.avatar.pose import AvatarPose, DEFAULT_SPRITE_CATALOG, load_pose_catalog
+from photo_assistant.avatar.pose import AvatarPose, WHITE_DRAGON_CATALOG, load_pose_catalog
 from photo_assistant.persona import read_character_persona
 from photo_assistant.prompts import CO_PHOTO_COMMAND_PROMPT, PHOTO_GUIDANCE_PROMPT, character_name_for
 from photo_assistant.protocol import StreamingCommandParser
@@ -17,36 +17,34 @@ from .client import ApiError, Image
 MODES = ('guidance', 'co-photo')
 
 
-def build_prompt(mode='guidance', *, character_name=None, character_persona=None,
-                 character_state=None, recent_context=None, sprite_catalog=None):
+def _prompt_and_catalog(mode, *, character_name=None, character_persona=None,
+                        character_state=None, recent_context=None, sprite_catalog=None):
     if mode not in MODES:
         raise ValueError('Unknown photo mode')
     if sprite_catalog is None:
-        sprite_catalog = DEFAULT_SPRITE_CATALOG
-    template = PHOTO_GUIDANCE_PROMPT if mode == 'guidance' else CO_PHOTO_COMMAND_PROMPT
-    # Experiments use supplied images rather than the live camera.
-    template = template.replace('你持续接收用户文字输入和摄像头画面。', '你接收用户文字和按需提供的图片。')
-    template = template.replace('画面来自真人摄像头', '画面来自用户提供的真人图片')
-    pose_catalog = ''
-    tachie_fields = ''
-    if mode == 'co-photo':
-        catalog = load_pose_catalog(sprite_catalog)
-        pose_catalog = catalog.describe()
-        tachie_fields = catalog.entry_pose.command_fields()
-        character_state = {
-            'x': 0.5, 'y': 0.95, 'scale': 1.0, 'rotation': 0.0,
-            'pose': asdict(catalog.entry_pose), 'camera_depth_mode': 'alongside',
-            **(character_state or {}),
-        }
-    return template.format(
+        sprite_catalog = WHITE_DRAGON_CATALOG
+    shared = dict(
         character_name=character_name or character_name_for(sprite_catalog),
         character_persona=read_character_persona() if character_persona is None else character_persona,
-        response_language='中文', pose_catalog=pose_catalog, tachie_fields=tachie_fields,
-        entry_context='本次图文实验使用调用方提供的图片和起始姿势。随帧的脚点和倍率用于选择传送坐标。是否已经入镜、身体被谁遮住，要看当前合成图里的角色与前景轮廓。',
-        current_character_state=json.dumps(character_state or {}, ensure_ascii=False),
-        recent_context=recent_context or ('开始真人拍照指导的新会话。' if mode == 'guidance' else '开始合照互动的新会话。'),
-        extra_instructions='根据本轮文字、图片和已有对话回应；保持回复简短。',
+        response_language='中文', recent_context=recent_context or '',
+        extra_instructions='图文输入中，画面来自用户提供的真人图片。',
     )
+    if mode == 'guidance':
+        return PHOTO_GUIDANCE_PROMPT.format(**shared), None
+
+    catalog = load_pose_catalog(sprite_catalog)
+    state = {'x': 0.5, 'y': 0.95, 'scale': 1.0, 'rotation': 0.0,
+             'pose': asdict(catalog.entry_pose), **(character_state or {})}
+    return CO_PHOTO_COMMAND_PROMPT.format(
+        **shared, pose_catalog=catalog.describe(), tachie_fields=catalog.entry_pose.command_fields(),
+        entry_context='起始姿势由调用方提供。',
+        current_character_state=json.dumps(state, ensure_ascii=False),
+    ), catalog
+
+
+def build_prompt(mode='guidance', **prompt_options):
+    system, _ = _prompt_and_catalog(mode, **prompt_options)
+    return system
 
 
 class PhotoSession:
@@ -61,6 +59,7 @@ class PhotoSession:
             raise ValueError('Invalid history limit or mode')
         self.client, self.mode = client, mode
         self.custom_prompt = system_prompt
+        self.last_system_prompt: str | None = None
         self.prompt_options = prompt_options
         if system_prompt is None and prompt_options.get('character_persona') is None:
             self.prompt_options['character_persona'] = read_character_persona()
@@ -68,11 +67,15 @@ class PhotoSession:
         self._history = []
         self._busy = False
 
+    def _prepare_prompt(self):
+        if self.custom_prompt is not None:
+            return self.custom_prompt, None
+        return _prompt_and_catalog(self.mode, **self.prompt_options)
+
     @property
     def system_prompt(self):
-        if self.custom_prompt is not None:
-            return self.custom_prompt
-        return build_prompt(self.mode, **self.prompt_options)
+        system, _ = self._prepare_prompt()
+        return system
 
     @property
     def history(self):
@@ -102,14 +105,12 @@ class PhotoSession:
         if observations is not None:
             content.append({'type': 'text', 'text': '客户端观测（可能不完整）：' + json.dumps(observations, ensure_ascii=False)})
         user = {'role': 'user', 'content': content}
-        system = self.system_prompt
+        system, active_catalog = self._prepare_prompt()
         messages = [{'role': 'system', 'content': system}, *deepcopy(self._history), user]
         parser = StreamingCommandParser(allow_plain_speech=self.allow_plain_speech)
         commands, first_command = [], None
         started = time.monotonic()
         mode_before = self.mode
-
-        active_catalog = None
 
         def receive(chunk):
             nonlocal first_command, active_catalog
@@ -118,7 +119,7 @@ class PhotoSession:
             for command in parser.feed('turn', chunk):
                 if command.kind == 'tachie':
                     if active_catalog is None:
-                        path = self.prompt_options.get('sprite_catalog') or DEFAULT_SPRITE_CATALOG
+                        path = self.prompt_options.get('sprite_catalog') or WHITE_DRAGON_CATALOG
                         active_catalog = load_pose_catalog(path)
                     if AvatarPose.from_tags(command.params) not in active_catalog.entries:
                         continue
@@ -139,6 +140,7 @@ class PhotoSession:
             )
 
         self._busy = True
+        self.last_system_prompt = system
         try:
             result = await self.client.complete(messages, on_delta=receive)
             self._history.extend([user, {'role': 'assistant', 'content': result.text}])

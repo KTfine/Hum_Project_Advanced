@@ -20,9 +20,6 @@ upstream/
 **/models/**
 !**/models/.gitkeep
 !/models/avatars/
-!/models/avatars/vita/
-!/models/avatars/vita/*.json
-!/models/avatars/vita/*.png
 !/models/avatars/white_dragon/
 !/models/avatars/white_dragon/*.json
 !/models/avatars/white_dragon/*.png
@@ -39,6 +36,7 @@ id_rsa*
 id_ed25519*
 *.wav
 *.zip
+!/experiments/prompts/2026-11-23-before-runtime-simplification.zip
 *.tar.gz
 ENV_READY
 MODEL_READY

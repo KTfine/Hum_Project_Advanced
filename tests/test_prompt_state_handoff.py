@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import photo_assistant.client as client
 from photo_assistant.avatar.frames import AvatarFrames
-from photo_assistant.avatar.pose import DEFAULT_SPRITE_CATALOG
+from photo_assistant.avatar.pose import WHITE_DRAGON_CATALOG
 from photo_assistant.vision.perspective import standing_height_px
 from tests.avatar_fixture import rendered_avatar
 
@@ -27,6 +27,8 @@ class Log:
 
 
 class Session:
+    can_observe = False
+
     def __init__(self, events):
         self.incoming = asyncio.Queue()
         for event in events:
@@ -54,7 +56,7 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.rendered = np.full((10, 10, 4), 255, dtype=np.uint8)
         self.enterContext(rendered_avatar(self.rendered))
         self.stop = threading.Event()
-        self.canvas = client.CanvasSource(DEFAULT_SPRITE_CATALOG, 200, 100, 80,
+        self.canvas = client.CanvasSource(WHITE_DRAGON_CATALOG, 200, 100, 80,
                                          self.stop, preview=False)
         self.camera = type('Camera', (), {'latest_frame': lambda _: np.zeros((100, 200, 3), dtype=np.uint8)})()
         self.canvas.start()
@@ -67,14 +69,17 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.canvas.close()
         self.folder.cleanup()
 
-    async def run_sessions(self, opener):
+    async def run_sessions(self, opener, *, text_input=None):
         with patch.object(client.direct_api, 'open_session', side_effect=opener), contextlib.redirect_stdout(io.StringIO()):
             await asyncio.wait_for(client.run_realtime_sessions(
                 'test-key', self.canvas, self.camera, client.SpeechQueue(), self.stop,
-                self.args, event_log=self.log, mode_selection=self.selection,
+                self.args, event_log=self.log, mode_selection=self.selection, text_input=text_input,
             ), timeout=2)
 
     async def test_both_mode_transitions_preserve_geometry_and_confirm_after_open(self):
+        inputs = client.ConsoleTextInput()
+        for prompt in ("来合照吧", "回去指导我吧", "继续"):
+            inputs.put(prompt)
         sockets = [
             Session([text('<teleport:x=0.4,y=0.8><mode:co-photo>')]),
             Session([text('<mode:co-photo><teleport:x=0.3,y=0.8><mode:guidance>')]),
@@ -88,10 +93,13 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.selection.co_photo_active, index == 2)
                 self.assertFalse(self.stop.is_set())
             return sockets[index]
-        await self.run_sessions(opener)
+        await self.run_sessions(opener, text_input=inputs)
         self.assertEqual(len(self.prompts), 3)
         for prompt, task in zip(self.prompts, ['真人拍照指导', '合照互动', '真人拍照指导']):
             self.assertIn(f'当前任务：{task}', prompt)
+            self.assertEqual(client.FIXED_CAMERA_CONTEXT in prompt, task == '合照互动')
+            self.assertNotIn(client.MOVING_CAMERA_CONTEXT, prompt)
+        self.assertIn(self.canvas.avatar_frames.catalog.describe(), self.prompts[1])
         self.assertIn('"x": 0.4', self.prompts[1])
         self.assertNotIn('"x":', self.prompts[0])
         self.assertNotIn('"x":', self.prompts[2])
@@ -119,14 +127,17 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(socket.placements[0])
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.camera.latest_frame())
 
-    async def test_shutter_saves_visible_composition_across_mode_switches(self):
+    async def test_actions_after_mode_tag_run_in_new_view_before_another_reply(self):
         # Distinct upper and lower colors expose which half made it into the photo.
         self.rendered[:5, :, :3] = (30, 80, 200)
+        done = {'type': 'response.done', 'response_id': 'r'}
         sessions = [
-            Session([text('<capture><mode:co-photo>')]),
-            Session([text('<teleport:x=0.4,y=1.05><capture><mode:guidance>')]),
-            Session([text('<capture>'), {'type': 'session.closed'}]),
+            Session([text('<capture><mode:co-photo><teleport:x=0.4,y=1.05><capture>'), done]),
+            Session([text('<mode:guidance><capture>'), done]),
+            Session([{'type': 'session.closed'}]),
         ]
+        for session in sessions:
+            session.emits_response_done = True
         with patch.object(client, 'PROJECT_ROOT', Path(self.folder.name)):
             await self.run_sessions(AsyncMock(side_effect=sessions))
 
@@ -147,7 +158,7 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         cue_counts = []
 
         def on_frame(jpeg, user_text, *, placement=None):
-            cue_counts.append(sum(row.get("source") == "co_photo_ready" for row in self.log.rows))
+            cue_counts.append(sum(row["event"] == "canvas.ready" for row in self.log.rows))
             if len(cue_counts) == 2:
                 co_photo.incoming.put_nowait(text("<teleport:x=0.3,y=0.8>"))
             elif len(cue_counts) == 3:
@@ -164,13 +175,16 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
                 event_log=self.log, mode_selection=self.selection,
             ), timeout=10)
         self.assertEqual(cue_counts, [0, 1, 1, 2, 2])
+        self.assertEqual([row["reason"] for row in self.log.rows if row["event"] == "canvas.ready"],
+                         ["entry", "action"])
+        self.assertFalse(any(row["event"] == "speak" for row in self.log.rows))
 
     async def test_mode_tag_alone_places_real_sprite_beside_full_body_before_first_capture(self):
         frame = self.camera.latest_frame()
         mask = np.zeros(frame.shape[:2], np.float32)
         cv2.circle(mask, (47, 17), 7, 1, -1)
         cv2.rectangle(mask, (37, 23), (57, 93), 1, -1)
-        canvas = client.CanvasSource(DEFAULT_SPRITE_CATALOG, 200, 100, 80, self.stop,
+        canvas = client.CanvasSource(WHITE_DRAGON_CATALOG, 200, 100, 80, self.stop,
                                      preview=False, scene_layers={"person": mask})
         with patch.object(client, "AvatarFrames", AvatarFrames):
             canvas.start()

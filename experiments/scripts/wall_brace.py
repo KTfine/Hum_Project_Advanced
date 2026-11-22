@@ -42,7 +42,7 @@ def replay(frame, directory, *, mirrored):
         state = canvas.apply_command(command)
         if state is None:
             raise AssertionError(f"No support found for {wire}")
-        _, placement = canvas.jpeg_with_placement(frame)
+        _, placement = canvas.frame_with_placement(frame)
         saved = PhotoCapture(camera, directory, canvas).save()
         photo = saved.replace(directory / ("mirror.png" if mirrored else "original.png"))
         pixels = cv2.imdecode(np.fromfile(photo, np.uint8), cv2.IMREAD_COLOR)

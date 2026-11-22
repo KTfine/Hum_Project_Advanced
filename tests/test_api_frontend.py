@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from photo_assistant.avatar.pose import DEFAULT_SPRITE_CATALOG, load_pose_catalog
+from photo_assistant.avatar.pose import WHITE_DRAGON_CATALOG, load_pose_catalog
 
 import photo_assistant.client as client
 
@@ -94,7 +94,7 @@ class DirectApiStartupTests(unittest.TestCase):
 
     def test_prompts_describe_camera_and_text_in_both_modes(self):
         canvas = SimpleNamespace(
-            avatar_frames=SimpleNamespace(catalog=load_pose_catalog(DEFAULT_SPRITE_CATALOG)),
+            avatar_frames=SimpleNamespace(catalog=load_pose_catalog(WHITE_DRAGON_CATALOG)),
             scene_layers=client.SceneLayers({}),
             controller=SimpleNamespace(render_state=lambda: (client.AvatarState(.5, .95, 1, 0), True, 1.0)),
         )
@@ -104,16 +104,33 @@ class DirectApiStartupTests(unittest.TestCase):
             self.assertIn("用户用英文时用英文回复", prompt)
             self.assertNotIn("麦克风", prompt)
             if mode == "co-photo":
-                example = next(line for line in prompt.splitlines() if line.startswith("- 切换立绘"))
-                self.assertIn(canvas.avatar_frames.catalog.entry_pose.command(), example)
+                self.assertIn(canvas.avatar_frames.catalog.describe(), prompt)
             else:
                 self.assertNotIn("<tachie:", prompt)
+
+        for options, description in (
+            ([], client.FIXED_CAMERA_CONTEXT),
+            (["--moving-camera"], client.MOVING_CAMERA_CONTEXT),
+            (["--no-camera"], None),
+            (["--no-camera", "--moving-camera"], None),
+        ):
+            with self.subTest(options=options):
+                args = client.parse_args(options)
+                co_photo = client.build_control_prompt(canvas, args, mode="co-photo")
+                guidance = client.build_control_prompt(canvas, args, mode="guidance")
+                for context in (client.FIXED_CAMERA_CONTEXT, client.MOVING_CAMERA_CONTEXT):
+                    self.assertEqual(context in co_photo, context == description)
+                    self.assertNotIn(context, guidance)
+                self.assertEqual(client.LIVE_ENTRY_CONTEXT in co_photo, description is not None)
+                for prompt in (guidance, co_photo):
+                    self.assertEqual("画面来自真人摄像头" in prompt, description is not None)
+                    self.assertEqual("当前没有摄像头输入" in prompt, description is None)
 
     def test_persona_file_reaches_both_modes_from_another_working_directory(self):
         from photo_assistant.persona import DEFAULT_PERSONA_FILE
 
         canvas = SimpleNamespace(
-            avatar_frames=SimpleNamespace(catalog=load_pose_catalog(DEFAULT_SPRITE_CATALOG)),
+            avatar_frames=SimpleNamespace(catalog=load_pose_catalog(WHITE_DRAGON_CATALOG)),
             scene_layers=client.SceneLayers({}),
             controller=SimpleNamespace(render_state=lambda: (client.AvatarState(.5, .95, 1, 0), True, 1.0)),
         )
@@ -125,7 +142,7 @@ class DirectApiStartupTests(unittest.TestCase):
             args = client.parse_args(["--character-persona-file", str(custom)])
             custom.unlink()
             for mode in client.MODES:
-                self.assertIn("角色设定：温和、好奇。\n喜欢用短句。", client.build_control_prompt(canvas, args, mode=mode))
+                self.assertIn("温和、好奇。\n喜欢用短句。", client.build_control_prompt(canvas, args, mode=mode))
             self.assertEqual(client.parse_args(["--character-persona", "直率"]).character_persona, "直率")
 
 
@@ -175,7 +192,8 @@ class ApiInputSenderTests(unittest.IsolatedAsyncioTestCase):
         source.put("和我合照")
         source.put("我想站着")
         canvas = MagicMock()
-        canvas.jpeg_with_placement.return_value = b"camera-jpeg", None
+        canvas.compose_view.return_value = object(), None, None
+        canvas.encode_jpeg.return_value = b"camera-jpeg"
         old = MagicMock()
         old.submit_frame.side_effect = ValueError("closed")
         with self.assertRaisesRegex(ValueError, "closed"):

@@ -6,7 +6,7 @@ import numpy as np
 from .framing import Placement
 from .ground import projected_height
 from .head import measure_face
-from .perspective import PORTRAIT_CHEEK_RATIO, matched_standing_height_px, person_reference
+from .perspective import PORTRAIT_CHEEK_RATIO, PersonSilhouettes, matched_standing_height_px
 
 
 # Fraction of projected opaque pixels below the face that the person should
@@ -18,8 +18,11 @@ def peek_placement(frame, person, masks, scene, sprite, entry, anchor, horizon, 
     if person is None or entry.face_box_px is None:
         return None
     h, w = person.shape
-    head = measure_face(frame, person)
-    ref = person_reference(person, head.center_x / w if head else .5, head.center_y / h if head else .9)
+    silhouettes = PersonSilhouettes.from_mask(person)
+    if silhouettes is None:
+        return None
+    head = measure_face(frame, person, silhouettes=silhouettes)
+    ref = silhouettes.reference_at(head.center_x / w if head else .5, head.center_y / h if head else .9)
     if ref is None:
         return None
     top = round((ref.foot_y - ref.height) * h)

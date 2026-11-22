@@ -11,11 +11,10 @@ import struct
 
 from photo_assistant.paths import PROJECT_ROOT
 
-DEFAULT_SPRITE_CATALOG = PROJECT_ROOT / "models/avatars/vita/catalog.json"
 WHITE_DRAGON_CATALOG = PROJECT_ROOT / "models/avatars/white_dragon/catalog.json"
 
 SPRITE_OPTIONS = {
-    "face": ("微笑", "龇牙笑", "高冷表情"),
+    "face": ("微笑", "龇牙笑", "高冷表情", "害羞", "惊讶", "思考", "难过", "鼓脸小生气"),
     "hand": ("比耶", "无动作"),
     "arm": ("自然下垂", "伸直举高过头", "背在身后", "左手扶墙", "右手扶墙"),
     "torso": ("正着站", "半身歪斜向右"),
@@ -103,21 +102,17 @@ class PoseCatalog:
         return pose
 
     def describe(self) -> str:
-        fields = tuple(SPRITE_OPTIONS)
-        lines = [f"本库有 {len(self.entries)} 个可用组合。"]
-        if len(self.entries) <= 12:
-            lines.append("每一行对应一张实际图片。要换图时整行复制，保留这张图的全部五项。")
-            lines.extend(pose.command() for pose in self.entries)
-        else:
-            options = {}
-            for field, allowed in SPRITE_OPTIONS.items():
-                used = {getattr(pose, field) for pose in self.entries}
-                options[field] = tuple(value for value in allowed if value in used)
-            lines.extend(f"{k} 可选 {'、'.join(v)}" for k, v in options.items())
-            lines.append("可用组合按 " + " | ".join(fields) + " 排列。* 表示该字段任一枚举值，/ 表示任选其一；输出时每项必须填一个具体值。")
-            rows = [tuple(asdict(pose).values()) for pose in self.entries]
-            lines.extend(" | ".join(p) for p in _patterns(rows, tuple(options.values())))
-            lines.append("切换示例 " + self.default_pose.command())
+        if len(self.entries) <= 16:
+            return "\n".join(pose.command() for pose in self.entries)
+
+        options = {}
+        for field, allowed in SPRITE_OPTIONS.items():
+            used = {getattr(pose, field) for pose in self.entries}
+            options[field] = tuple(value for value in allowed if value in used)
+        lines = [f"{field} 可选 {'、'.join(values)}" for field, values in options.items()]
+        lines.append("组合按 " + " | ".join(options) + " 排列（* 为该项任一可选值，/ 分隔备选值）。")
+        rows = [tuple(asdict(pose).values()) for pose in self.entries]
+        lines.extend(" | ".join(pattern) for pattern in _patterns(rows, tuple(options.values())))
         return "\n".join(lines)
 
 

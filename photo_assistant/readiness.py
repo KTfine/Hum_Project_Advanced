@@ -1,30 +1,11 @@
-"""Announce a completed co-photo placement once, from the rendered camera frame."""
+"""Detect co-photo entry and action completion from the rendered camera frame."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isclose
 
-from .protocol import CHARACTER_ACTIONS, StreamingCommandParser
-
-
-def _ready_message(placement: dict) -> str:
-    source = placement.get("placement_source")
-    commands = StreamingCommandParser().feed("render", placement["current_tachie"])
-    pose = commands[0].params if commands and commands[0].kind == "tachie" else {}
-    peace = pose.get("hand") == "比耶"
-    if source == "桌沿坐姿" and pose.get("legs") == "坐着":
-        return "我在桌沿坐好了" + ("，正比着剪刀手。" if peace else "。")
-    if source == "扶墙站位" and placement.get("wall_contact_xy"):
-        return "我已经扶稳了，姿势摆好了。"
-    if source == "肩后探身" and pose.get("torso") == "半身歪斜向右":
-        return "我从你肩后探出身了" + ("，正比着剪刀手。" if peace else "。")
-    location = {"并排站位": "我在你旁边", "桌后站位": "我在桌子后面"}.get(source)
-    if peace:
-        return (location or "我到位了") + "，剪刀手摆好了。"
-    if location:
-        return location + "，姿势摆好了。"
-    return "我到位了，姿势也摆好了。"
+from .protocol import CHARACTER_ACTIONS
 
 
 @dataclass(frozen=True)
@@ -35,7 +16,6 @@ class _Composition:
     pose: str
     rotation: float
     layer: int
-    depth: str
 
     def matches(self, other: _Composition | None) -> bool:
         if other is None:
@@ -43,7 +23,7 @@ class _Composition:
         # Position is normalized; subpixel changes from a fresh solve do not
         # constitute a new placement. Rotation is measured in degrees.
         return (
-            self.pose == other.pose and self.layer == other.layer and self.depth == other.depth
+            self.pose == other.pose and self.layer == other.layer
             and isclose(self.x, other.x, abs_tol=0.001)
             and isclose(self.y, other.y, abs_tol=0.001)
             and isclose(self.scale, other.scale, abs_tol=0.001)
@@ -62,6 +42,11 @@ class CoPhotoReadiness:
         self._failed = False
         self._latest: _Composition | None = None
         self._before_turn: _Composition | None = None
+
+    @property
+    def pending_action(self) -> bool:
+        """Keep the user's requested composition intact until its next settled frame."""
+        return self._turn_open or self._pending == "action"
 
     def begin_turn(self) -> None:
         if self._turn_open:
@@ -107,7 +92,6 @@ class CoPhotoReadiness:
         composed = _Composition(
             placement["x"], placement["y"], placement["scale"], placement["current_tachie"],
             placement.get("rotation", 0.0), placement.get("layer_index", 0),
-            placement.get("camera_depth_mode", "alongside"),
         )
         self._latest = composed
         if self._turn_open or self._pending is None:
@@ -115,4 +99,4 @@ class CoPhotoReadiness:
         pending, self._pending = self._pending, None
         if pending == "action" and composed.matches(self._before_turn):
             return None
-        return _ready_message(placement)
+        return pending

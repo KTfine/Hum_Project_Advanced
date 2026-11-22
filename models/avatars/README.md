@@ -1,10 +1,6 @@
 # 合照立绘库
 
-小白龙向画面右侧探身时有两种表情，默认以微笑入场，合照时可以切换为龇牙笑。[小白龙图库](white_dragon/catalog.json)
-
-[Vita 图库](vita/catalog.json) 收录了 90 张透明 PNG，覆盖三种脸部、两种手势、三种手臂位置、两种上半身姿势和三种腿部姿势。背手时手指被身体遮住，库中这一姿势只提供“无动作”。其余组合各有一张立绘。侧倾方向以观看画面的人为准。
-
-Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带微笑。
+小白龙有 13 张透明立绘。自然站姿有七种表情，向画面右侧探身时可以微笑或龇牙笑。其他姿势包括单膝蹲、垂腿坐姿和左右手扶墙。[小白龙图库](white_dragon/catalog.json)
 
 ## 添加自己的立绘
 
@@ -33,7 +29,7 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 
 | 字段 | 允许值 |
 | --- | --- |
-| face | 微笑、龇牙笑、高冷表情 |
+| face | 微笑、龇牙笑、高冷表情、害羞、惊讶、思考、难过、鼓脸小生气 |
 | hand | 比耶、无动作 |
 | arm | 自然下垂、伸直举高过头、背在身后、左手扶墙、右手扶墙 |
 | torso | 正着站、半身歪斜向右 |
@@ -53,7 +49,19 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 
 龇牙笑版本的双眼弯成月牙，嘴角扬起，露出一排小白牙。切换指令为 `<tachie:face=龇牙笑,hand=无动作,arm=自然下垂,torso=半身歪斜向右,legs=站着>`。改回 `face=微笑` 即可恢复入场表情。[龇牙笑立绘](white_dragon/peek-right-grin.png)
 
-正站时双脚并拢，双臂垂在裙侧，手指微弯。参考图中的平静闭口表情登记为 `高冷表情`。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=站着>`。[自然正站立绘](white_dragon/stand-relaxed.png)
+正站时双脚并拢，双臂垂在裙侧，手指微弯。默认表情是平静闭口的 `高冷表情`。其余表情都沿用这张正站原画，其中龇牙笑、害羞、惊讶、思考和难过的选题参考了 [Sanae 表情图库](https://github.com/DDRP674/AIAA3800/tree/main/tachie/sanae)。
+
+| 正站 `face` 值 | 全身立绘 |
+| --- | --- |
+| 高冷表情 | [stand-relaxed.png](white_dragon/stand-relaxed.png) |
+| 龇牙笑 | [stand-grin.png](white_dragon/stand-grin.png) |
+| 害羞 | [stand-shy.png](white_dragon/stand-shy.png) |
+| 惊讶 | [stand-surprised.png](white_dragon/stand-surprised.png) |
+| 思考 | [stand-thinking.png](white_dragon/stand-thinking.png) |
+| 难过 | [stand-sad.png](white_dragon/stand-sad.png) |
+| 鼓脸小生气 | [stand-pout.png](white_dragon/stand-pout.png) |
+
+例如，切换到思考时发送 `<tachie:face=思考,hand=无动作,arm=自然下垂,torso=正着站,legs=站着>`。同一站姿换表情时，把 `face` 换成表中对应的值，保留其余四项。
 
 扶墙时，小白龙微笑站立，左手抬向画面右侧，掌心贴墙，右手垂在裙边。切换指令为 `<tachie:face=微笑,hand=无动作,arm=左手扶墙,torso=正着站,legs=站着>`。[左手扶墙立绘](white_dragon/wall-brace.png)
 
@@ -61,9 +69,9 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 
 扶墙立绘的 `wall_contact_px` 标在手掌朝向墙面的外沿，坐标从 PNG 左上角起算。左手图为 `[922, 415]`，右手图为 `[36, 425]`。两张图各自沿用目录里的脚底锚点与站高。
 
-单膝蹲沿用正站的表情，画面左脚踩实，另一侧膝盖落地，一只手搭在抬起的膝上。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=蹲下>`。[单膝蹲立绘](white_dragon/kneel.png)
+单膝蹲沿用正站的高冷表情，画面左脚踩实，另一侧膝盖落地，一只手搭在抬起的膝上。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=蹲下>`。[单膝蹲立绘](white_dragon/kneel.png)
 
-桌沿坐姿按真人示范绘制，双手在髋侧撑着桌面，一条腿稍向前，双脚垂在桌沿下。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=坐着>`。图库的 `seat_contact_px` 记录两掌间的支撑点 `[545, 843]`。在已识别的桌上落座时，客户端把该点投影到实际前沿，裙摆和小腿可以自然垂落；鞋底锚点仍然用于绘制。[桌沿坐姿立绘](white_dragon/sit-table-edge.png)
+这张坐姿按坐在桌沿的真人示范绘制，双手撑在髋侧，一条腿稍向前，双脚自然垂下。切换指令为 `<tachie:face=高冷表情,hand=无动作,arm=自然下垂,torso=正着站,legs=坐着>`。图库的 `seat_contact_px` 记录两掌间的坐姿支撑点 `[545, 843]`。坐到椅面、床沿或桌沿时，客户端把这个点对齐画面中的支撑边沿，鞋底锚点仍然用于绘制。[垂腿坐姿立绘](white_dragon/sit-table-edge.png)
 
 <details>
 <summary>前一版侧探立绘的绘图提示词</summary>
@@ -75,7 +83,3 @@ Vita 入场时向画面右侧探身，双脚站立、手臂自然下垂，面带
 3. 局部改表情。把这张小白龙立绘的嘴改成清晰可见的、嘴角轻轻上翘的闭口微笑，让她与镜头中的人打招呼。脸型、眼睛保持原样。严格保留该图娇小的四头半比例、身高、自然短腰、双腿稍屈并拢、双手自然放下、腰胯和胸腔横向探向画面右侧的姿势；保留白色龙角、紫瞳、所有服装细节、翅膀、尾巴、身体完整度和画布构图。保持白裙和发丝实色及真正透明的背景，完整全身立绘，不画遮挡物。
 
 </details>
-
-## Vita 素材来源
-
-随附 PNG 从 pixiv 的 CC0 角色 Vita（β Ver AvatarSample_3）离线导出。各图共用角色比例和地面，已分别裁去透明边。原始素材 SHA-256 为 `f2bf78f28a24e2f75f5ca0b6c3b646654c394e4b03592dfaa0d0633ef0972b4d`。[角色主页](https://hub.vroid.com/en/characters/6193066630030526355/models/3525604181073039892) · [pixiv 授权说明](https://vroid.pixiv.help/hc/en-us/articles/360014900113)

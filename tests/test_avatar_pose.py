@@ -7,17 +7,17 @@ import unittest
 
 from photo_assistant.avatar.frames import AvatarFrames
 from photo_assistant.avatar.pose import (
-    AvatarPose, DEFAULT_SPRITE_CATALOG, PoseCatalog, SPRITE_OPTIONS, SpriteEntry, WHITE_DRAGON_CATALOG,
+    AvatarPose, PoseCatalog, SPRITE_OPTIONS, SpriteEntry, WHITE_DRAGON_CATALOG,
     load_pose_catalog,
 )
 
 
 class AvatarPoseTests(unittest.TestCase):
     def test_every_advertised_combination_decodes_with_its_ground_point(self):
-        frames = AvatarFrames(DEFAULT_SPRITE_CATALOG)
+        frames = AvatarFrames(WHITE_DRAGON_CATALOG)
         self.addCleanup(frames.close)
         catalog = frames.catalog
-        self.assertEqual(catalog.default_pose, AvatarPose())
+        self.assertEqual(catalog.default_pose, catalog.entry_pose)
         self.assertEqual(catalog.entry_pose, AvatarPose(torso="半身歪斜向右"))
         for pose in catalog.entries:
             self.assertEqual(catalog.select(asdict(pose)), pose)
@@ -26,25 +26,23 @@ class AvatarPoseTests(unittest.TestCase):
             self.assertEqual(pixels.shape[2], 4)
             self.assertGreater(pixels[:, :, 3].max(), 0)
             self.assertGreater(catalog.entry(pose).standing_height_px, 0)
-        base = catalog.default_pose
-        sitting = replace(base, legs="坐着")
-        self.assertEqual(catalog.entry(sitting).standing_height_px, catalog.entry(base).standing_height_px)
-        self.assertLess(frames.frame(sitting).shape[0], frames.frame(base).shape[0])
+        sitting = replace(catalog.standing_pose, legs="坐着")
+        self.assertIsNotNone(catalog.entry(sitting).seat_contact_px)
 
     def test_fields_are_mandatory_and_values_are_closed(self):
-        catalog = load_pose_catalog(DEFAULT_SPRITE_CATALOG)
+        catalog = load_pose_catalog(WHITE_DRAGON_CATALOG)
         for invalid in ({}, {"face": "微笑"}, {**asdict(AvatarPose()), "mood": "开心"},
                         {**asdict(AvatarPose()), "hand": "挥手"}):
             with self.assertRaises(ValueError):
                 catalog.select(invalid)
-        self.assertIn(AvatarPose().command(), catalog.describe())
 
-    def test_wall_poses_are_available_only_in_the_white_dragon_catalog(self):
+    def test_wall_contact_points_match_the_available_wall_poses(self):
         frames = AvatarFrames(WHITE_DRAGON_CATALOG)
         self.addCleanup(frames.close)
         dragon = frames.catalog
+        self.assertEqual(dragon.describe().splitlines(), [pose.command() for pose in dragon.entries])
         self.assertEqual(dragon.standing_pose.arm, "自然下垂")
-        vita = load_pose_catalog(DEFAULT_SPRITE_CATALOG)
+        standing_only = PoseCatalog({dragon.standing_pose: dragon.entry(dragon.standing_pose)})
         for arm, filename, side in (("左手扶墙", "wall-brace.png", 1), ("右手扶墙", "wall-brace-left.png", -1)):
             with self.subTest(arm=arm):
                 wall_pose = AvatarPose(arm=arm)
@@ -57,10 +55,34 @@ class AvatarPoseTests(unittest.TestCase):
                 alpha = frames.frame(wall_pose)[:, :, 3]
                 self.assertGreater(alpha[y, x], 220)
                 self.assertLess(alpha[y, x + 4 * side], 32)
-                self.assertIn(wall_pose.command(), dragon.describe())
-                self.assertNotIn(arm, vita.describe())
+                self.assertNotIn(arm, standing_only.describe())
                 with self.assertRaises(ValueError):
-                    vita.select(asdict(wall_pose))
+                    standing_only.select(asdict(wall_pose))
+
+    def test_white_dragon_standing_expressions_share_the_base_geometry(self):
+        frames = AvatarFrames(WHITE_DRAGON_CATALOG)
+        self.addCleanup(frames.close)
+        catalog = frames.catalog
+        base = AvatarPose(face="高冷表情")
+        self.assertEqual(catalog.standing_pose, base)
+        base_art = catalog.entry(base)
+        base_pixels = frames.frame(base)
+        chin_y = int(base_art.face_box_px[3])
+        for face in ("龇牙笑", "害羞", "惊讶", "思考", "难过", "鼓脸小生气"):
+            with self.subTest(face=face):
+                pose = replace(base, face=face)
+                self.assertEqual(catalog.select(asdict(pose)), pose)
+                art = catalog.entry(pose)
+                self.assertEqual(art.standing_height_px, base_art.standing_height_px)
+                self.assertEqual(art.anchor_px, base_art.anchor_px)
+                self.assertEqual(art.face_box_px, base_art.face_box_px)
+                pixels = frames.frame(pose)
+                self.assertEqual(pixels.shape, base_pixels.shape)
+                self.assertTrue((pixels[:, :, 3] == base_pixels[:, :, 3]).all())
+                # The puffed cheeks extend just below the neutral jawline.
+                jaw_y = chin_y + 8 if face == "鼓脸小生气" else chin_y
+                self.assertTrue((pixels[jaw_y + 1:] == base_pixels[jaw_y + 1:]).all())
+                self.assertTrue((pixels != base_pixels).any())
 
     def test_sparse_entry_prefers_available_leaning_pose_in_priority_order(self):
         entry = SpriteEntry(Path("sample.png"), 400, (80, 400))
@@ -100,7 +122,8 @@ class AvatarPoseTests(unittest.TestCase):
             write(row)
             with self.assertRaisesRegex(ValueError, "样例.png"):
                 load_pose_catalog(path)
-            sample = load_pose_catalog(DEFAULT_SPRITE_CATALOG).entry(AvatarPose()).path
+            bundled = load_pose_catalog(WHITE_DRAGON_CATALOG)
+            sample = bundled.entry(bundled.default_pose).path
             (folder / row["file"]).write_bytes(sample.read_bytes())
             catalog = load_pose_catalog(path)
             self.assertEqual(catalog.default_pose, pose)

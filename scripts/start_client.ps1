@@ -5,7 +5,8 @@ param(
     [switch]$Microphone,
     [switch]$NoTts,
     [switch]$NoMicrophone,
-    [string]$MicrophoneDevice
+    [string]$MicrophoneDevice,
+    [switch]$MovingCamera
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -16,6 +17,7 @@ if (-not $Python) {
 $clientLog = Join-Path $projectRoot ('experiments\runtime\live-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.jsonl')
 $env:PYTHONIOENCODING = 'utf-8'
 $clientArguments = @('--log-file', $clientLog)
+if ($MovingCamera) { $clientArguments += '--moving-camera' }
 if ($NoTts) { $clientArguments += '--no-tts' }
 if ($PSBoundParameters.ContainsKey('CameraDevice')) { $clientArguments += @('--camera-device', $CameraDevice) }
 if ($PSBoundParameters.ContainsKey('PersonaFile')) { $clientArguments += @('--character-persona-file', $PersonaFile) }

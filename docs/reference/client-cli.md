@@ -5,6 +5,7 @@
 | 选项 | 默认值与用途 |
 |---|---|
 | `--camera-device` | OpenCV 摄像头编号，选择顺序见下文 |
+| `--moving-camera` | 手持或移动镜头时持续更新家具及深度。默认按固定机位运行；PowerShell 启动脚本对应参数为 `-MovingCamera`。 |
 | `--no-camera` | 关闭摄像头采集，指导模式使用空白帧 |
 | `--no-preview` | 隐藏预览窗口 |
 | `--microphone` / `--no-microphone` | 开启或关闭 AssemblyAI 实时听写，默认开启，命令行优先于设置文件 |
@@ -18,11 +19,11 @@
 | `--character-persona` | 本次启动直接使用指定的性格文字 |
 | `--prompt` | 使用完整自定义提示词，停用内置模板自动切换 |
 | `--log-file` | 指定 JSONL 日志，默认存入项目内的 `experiments/runtime/` |
-| `--verbose` | 在终端额外显示静默观察的 `[blank]` 和 API 元数据 |
+| `--verbose` | 在终端额外显示 `[blank]` 和 API 元数据 |
 
 使用 `python realtime_av_test.py --help` 查看当前版本完整参数。在预览窗口按 Q 或在终端按 Ctrl+C 退出。
 
-终端把同一回复的说话片段接在一行 `[speak]` 后面。拍照结果和模式切换各占一行，静默观察默认不刷屏。查看模型实际返回的标签和分块时，可在 JSONL 中查找 `api.receive`。
+终端把同一回复的说话片段接在一行 `[speak]` 后面。拍照结果和模式切换各占一行。查看模型实际返回的标签和分块时，可在 JSONL 中查找 `api.receive`。
 
 客户端默认使用 `deepseek-flash` 和 `low` 思考强度。可在运行前用 `DEEPSEEK_MODEL` 选择支持图像输入的模型，用 `DEEPSEEK_THINKING` 设置思考强度。程序进入指导模式后，在终端提交第一条文字以发起请求。
 

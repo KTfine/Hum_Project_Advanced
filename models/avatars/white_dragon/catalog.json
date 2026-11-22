@@ -40,6 +40,84 @@
       "face_box_px": [408, 310, 560, 419]
     },
     {
+      "file": "stand-grin.png",
+      "tags": {
+        "face": "龇牙笑",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "stand-shy.png",
+      "tags": {
+        "face": "害羞",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "stand-surprised.png",
+      "tags": {
+        "face": "惊讶",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "stand-thinking.png",
+      "tags": {
+        "face": "思考",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "stand-sad.png",
+      "tags": {
+        "face": "难过",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
+      "file": "stand-pout.png",
+      "tags": {
+        "face": "鼓脸小生气",
+        "hand": "无动作",
+        "arm": "自然下垂",
+        "torso": "正着站",
+        "legs": "站着"
+      },
+      "standing_height_px": 1398,
+      "anchor_px": [490, 1545],
+      "face_box_px": [408, 310, 560, 419]
+    },
+    {
       "file": "kneel.png",
       "tags": {
         "face": "高冷表情",

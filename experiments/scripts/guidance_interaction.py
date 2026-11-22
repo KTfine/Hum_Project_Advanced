@@ -7,7 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 import threading
-import time
 
 import cv2
 import numpy as np
@@ -51,50 +50,34 @@ async def run(folder):
     logger = TurnLog(output / "guidance-events.jsonl")
     logger.record("experiment.setup", mode="guidance", system_prompt=system,
                   system_sha256=hashlib.sha256(system.encode()).hexdigest(), input_files=list(frames))
-    session = await open_session(system, managed_observations=True)
+    session = await open_session(system)
     selection = client.ModeSelection()
     receiver = asyncio.create_task(client.receive_realtime_outputs(
         session, stop, canvas, client.SpeechQueue(), verbose=False, event_log=logger,
         mode_selection=selection, photo_capture=client.PhotoCapture(camera, output / "photos")))
     records = []
-    last_submit = 0.0
 
-    async def step(label, image, instruction=None):
-        nonlocal last_submit
-        if instruction is None:
-            # Leave the real eight-second observation gate in effect.
-            await asyncio.sleep(max(0, last_submit + 8.2 - time.monotonic()))
+    async def step(label, image, instruction):
         camera.frame = frames[image]
         jpeg, placement = canvas.jpeg_with_placement(camera.frame, include_character=False)
         assert placement is None
-        previous_id = session._response_id
         logger.record("experiment.input", turn=label, image=image, text=instruction)
         session.submit_frame(jpeg, instruction)
-        record = dict(turn=label, image=image, instruction=instruction)
-        if previous_id == session._response_id:
-            record["submitted"] = False
-        else:
-            last_submit = time.monotonic()
-            event = await asyncio.wait_for(logger.completed.get(), timeout=100)
-            record.update(submitted=True, event=event)
-        record["pending_after"] = session.pending_observation
+        event = await asyncio.wait_for(logger.completed.get(), timeout=100)
+        record = dict(turn=label, image=image, instruction=instruction, event=event)
         record["photos_after"] = [p.name for p in sorted((output / "photos").glob("*.png"))]
         records.append(record)
         (output / "guidance-results.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(label, record.get("event", {}).get("text", "no request"), flush=True)
-        if record.get("event", {}).get("type") == "error":
-            raise RuntimeError(record["event"]["error"])
+        print(label, event.get("text", ""), flush=True)
+        if event["type"] == "error":
+            raise RuntimeError(event["error"])
         if receiver.done():
             raise RuntimeError(f"Guidance exited unexpectedly: {receiver.result()!r}")
 
     try:
         await step("visual-advice", "person-left", "我想拍一张自然的全身照。你看我站在什么旁边？给我一个现在就能做的小调整，先别拍。")
-        await step("unsolicited-observation", "person-left")
         await step("preference", "person-left", "我还是想站在原地，不想靠着家具。只调整一下上半身，怎么做自然？")
-        await step("delegate", "person-left", "我想换到玻璃隔断旁。等你看到我到了，就告诉我一次，先别拍。")
-        await step("still-at-bookshelf", "person-left")
-        await step("arrived-at-glass", "person-right")
-        await step("no-repeat-after-feedback", "person-right")
+        await step("arrived-at-glass", "person-right", "我换到玻璃隔断旁了。看现在的画面，我的站姿还需要调整吗？")
         await step("shutter", "person-right", "现在就帮我拍一张吧。")
         photos = list((output / "photos").glob("*.png"))
         exact = len(photos) == 1 and np.array_equal(cv2.imdecode(np.fromfile(photos[0], np.uint8), 1),

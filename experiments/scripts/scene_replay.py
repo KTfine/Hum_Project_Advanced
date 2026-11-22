@@ -62,14 +62,14 @@ def replay(path, output, x, far_y, near_y, width_limit=640):
                        floor_fitted=scene.ground is not None, entry=entry, moves={})
         samples = []
         for label, y in (("far", far_y), ("near", near_y), ("far-return", far_y)):
-            canvas.apply_command(Command("teleport", {"x": x, "y": y, "depth": label.split("-")[0]}))
+            canvas.apply_command(Command("teleport", {"x": x, "y": y}))
             shot = canvas.render_capture_frame(raw)
-            _, pose = canvas.jpeg_with_placement(raw)
+            preview, pose = canvas.frame_with_placement(raw)
             if pose is None:
                 raise RuntimeError("No matched preview")
-            assert np.array_equal(canvas.render_frame(camera_frame=raw), shot)
+            assert np.array_equal(preview, shot)
             save(output / (label + ".png"), shot)
-            # Replay the identical placement in front of all real layers.
+            # Place the visibility control in front; the next scene teleport restores automatic occlusion.
             canvas.apply_command(Command("layer", {"index": 2}))
             unobscured = canvas.render_capture_frame(raw)
             occupied = np.any(unobscured != raw, axis=2)

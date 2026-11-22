@@ -18,6 +18,8 @@ from photo_assistant.api import session as direct
 from photo_assistant.avatar.pose import WHITE_DRAGON_CATALOG
 from photo_assistant.paths import PROJECT_ROOT
 from photo_assistant.protocol import Command
+from photo_assistant.vision.occlusion import PersonOcclusion
+from photo_assistant.vision.scene import SceneSegmenter
 from photo_assistant.vision.segmentation import PersonSegmenter
 
 
@@ -48,7 +50,7 @@ def save_frame(path, frame):
 
 
 async def send_turn(system, jpeg, placement, text, canvas, stop, log):
-    session = await direct.open_session(system, managed_observations=True)
+    session = await direct.open_session(system)
     try:
         session.submit_frame(jpeg, text, placement=placement)
         await client.receive_realtime_outputs(session, stop, canvas, client.SpeechQueue(),
@@ -73,13 +75,20 @@ def run(args):
     settings = client.parse_args([], default_catalog=WHITE_DRAGON_CATALOG)
     stop = threading.Event()
     log = TurnLog(stop)
-    segmenter = PersonSegmenter()
-    try:
-        mask = segmenter.segment(frame)
-    finally:
-        segmenter.close()
+    worker = None
+    if args.send:
+        frame.setflags(write=False)
+        worker = PersonOcclusion(SceneSegmenter, max_frame_age=120)
+        person_layer = worker
+    else:
+        segmenter = PersonSegmenter()
+        try:
+            person_layer = segmenter.segment(frame)
+        finally:
+            segmenter.close()
     canvas = client.CanvasSource(settings.sprite_catalog, w, h, settings.jpeg_quality, stop,
-                                 preview=False, scene_layers={"person": mask}, infer_obstacle=True)
+                                 preview=False, scene_layers={"person": person_layer}, infer_obstacle=True,
+                                 project_scene=args.send)
     canvas.start()
     record = dict(image=args.image.name, image_sha256=hashlib.sha256(raw).hexdigest(),
                   dimensions=[w, h], user=args.text, events=log.rows, send=args.send,
@@ -88,8 +97,14 @@ def run(args):
     try:
         # Start each trial with the same visible standing character, already in co-photo.
         entrance = canvas.entrance_state(camera)
-        system = client.build_control_prompt(canvas, settings, mode="co-photo", entrance=entrance)
+        scene_context = ("本次合照使用同一张静态照片，随图提供家具位置。" if args.send
+                         else "本次合照使用同一张静态照片和固定的人体轮廓。")
+        system = client.build_control_prompt(canvas, settings, mode="co-photo", entrance=entrance,
+                                             scene_context=scene_context)
         canvas.configure_view(camera, show_character=True, entrance=entrance)
+        if worker is not None:
+            worker.submit(frame)
+            worker.mask_for_capture(frame)
         canvas.apply_command(Command("tachie", asdict(canvas.avatar_frames.catalog.standing_pose)))
         canvas.apply_command(Command("teleport", {"x": args.x, "y": args.y}))
         jpeg, placement = canvas.jpeg_with_placement(frame)
@@ -103,14 +118,14 @@ def run(args):
             # Positive control: supply the support point and apparent height by hand.
             sx, sy, height_px = args.manual_seat
             catalog = canvas.avatar_frames.catalog
-            pose = next(p for p, e in catalog.entries.items() if e.path.name == "sit-table-edge.png")
-            entry = catalog.entry(pose)
+            pose, entry = next((p, e) for p, e in catalog.entries.items() if e.seat_contact_px is not None)
             ax, ay = entry.anchor_px
+            contact_x, contact_y = entry.seat_contact_px
             art_scale = height_px / entry.standing_height_px
             commands = [
                 Command("tachie", asdict(pose)),
-                Command("teleport", {"x": (sx - (545 - ax) * art_scale) / w,
-                                     "y": (sy - (843 - ay) * art_scale) / h,
+                Command("teleport", {"x": (sx - (contact_x - ax) * art_scale) / w,
+                                     "y": (sy - (contact_y - ay) * art_scale) / h,
                                      "scale": height_px / (canvas._fixed.standing_height_ratio * h)}),
             ]
             record["manual_seat"] = args.manual_seat
@@ -119,24 +134,27 @@ def run(args):
         record["error"] = str(exc)
         raise
     finally:
-        final = canvas.render_capture_frame(frame)
-        save_frame(out / "after.png", final)
-        state = canvas.controller.state_at()
-        record["after"] = asdict(state)
-        fixed = canvas._fixed
-        if fixed is not None:
-            record["rendered_placement"] = asdict(fixed)
-        # Contact landmark documented in models/avatars/README.md for this drawing.
-        entry = canvas.avatar_frames.catalog.entry(state.pose)
-        if entry.path.name == "sit-table-edge.png" and fixed is not None:
-            scale = fixed.standing_height_ratio * h / entry.standing_height_px
-            ax, ay = entry.anchor_px
-            transform = cv2.getRotationMatrix2D((ax, ay), -state.rotation, scale)
-            transform[:, 2] += (round(fixed.x * w) - ax, round(fixed.y * h) - ay)
-            record["contact_xy_px"] = (transform @ [545, 843, 1]).round(1).tolist()
-        (out / "result.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf8")
-        canvas.close()
-        print(out)
+        try:
+            final = canvas.render_capture_frame(frame)
+            save_frame(out / "after.png", final)
+            state = canvas.controller.state_at()
+            record["after"] = asdict(state)
+            fixed = canvas._fixed
+            if fixed is not None:
+                record["rendered_placement"] = asdict(fixed)
+            entry = canvas.avatar_frames.catalog.entry(state.pose)
+            if entry.seat_contact_px is not None and fixed is not None:
+                scale = fixed.standing_height_ratio * h / entry.standing_height_px
+                ax, ay = entry.anchor_px
+                transform = cv2.getRotationMatrix2D((ax, ay), -state.rotation, scale)
+                transform[:, 2] += (round(fixed.x * w) - ax, round(fixed.y * h) - ay)
+                record["contact_xy_px"] = (transform @ [*entry.seat_contact_px, 1]).round(1).tolist()
+        finally:
+            if worker is not None:
+                worker.close()
+            canvas.close()
+            (out / "result.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf8")
+            print(out)
 
 
 if __name__ == "__main__":

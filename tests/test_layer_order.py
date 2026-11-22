@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import cv2
@@ -13,7 +14,8 @@ import numpy as np
 
 from photo_assistant.protocol import StreamingCommandParser
 import photo_assistant.client as client
-from photo_assistant.avatar.pose import DEFAULT_SPRITE_CATALOG
+from photo_assistant.avatar.pose import WHITE_DRAGON_CATALOG
+from photo_assistant.vision.scene import SceneAnalysis
 from tests.avatar_fixture import rendered_avatar
 
 
@@ -38,7 +40,7 @@ class LayerOrderTests(unittest.TestCase):
         self.camera = Mock(spec=client.CameraSource)
         self.camera.latest_frame.return_value = self.frame
         self.canvas = client.CanvasSource(
-            DEFAULT_SPRITE_CATALOG, 64, 64, 95, threading.Event(), preview=False,
+            WHITE_DRAGON_CATALOG, 64, 64, 95, threading.Event(), preview=False,
             scene_layers={"person": self.worker, "table": table},
         )
         self.canvas.start()
@@ -90,6 +92,50 @@ class LayerOrderTests(unittest.TestCase):
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.frame)
         self.canvas.configure_view(self.camera, show_character=True)
         np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.expected(1))
+
+    def test_preview_advances_between_masks_and_shutter_uses_its_own_exposure(self):
+        # The segmenter publishes one result while three new camera exposures arrive.
+        expected = self.expected(0)
+        for level in (75, 90, 110):
+            latest = self.frame.copy()
+            latest[0, 0] = level
+            self.camera.latest_frame.return_value = latest
+            expected[0, 0] = level
+            np.testing.assert_array_equal(self.canvas.render_preview_frame(), expected)
+        self.worker.mask_for_capture.assert_not_called()
+        # The API observation still pairs the model's image with its measured scene.
+        _, jpeg = cv2.imencode(".jpg", self.expected(0), [cv2.IMWRITE_JPEG_QUALITY, 95])
+        self.assertEqual(self.canvas.latest_jpeg(latest), jpeg.tobytes())
+
+        self.worker.mask_for_capture.return_value = np.zeros_like(self.person)
+        photo = self.canvas.render_capture_frame(latest)
+        self.assertIs(self.worker.mask_for_capture.call_args.args[0], latest)
+        self.assertEqual(int(photo[0, 0, 0]), 110)
+        np.testing.assert_array_equal(photo[30, 35], self.avatar_color)
+
+    def test_preview_shows_new_resolution_while_waiting_for_matching_masks(self):
+        latest = np.full((48, 80, 3), 95, np.uint8)
+        self.camera.latest_frame.return_value = latest
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), latest)
+        self.worker.mask_for_capture.assert_not_called()
+
+    def test_fixed_camera_panel_is_measured_once_per_calibration(self):
+        layers = client.SceneLayers({"person": self.worker}, infer_obstacle=True)
+        room = SimpleNamespace(frame=self.frame, person=self.person)
+        scene = Mock(spec=SceneAnalysis, calibration=room, objects=(), person=np.zeros_like(self.person))
+        with patch("photo_assistant.vision.layers.panel_mask",
+                   side_effect=[np.ones_like(self.person), None]) as detect:
+            for level in (20, 40):
+                frame = np.full_like(self.frame, level)
+                self.worker.latest.return_value = frame, scene
+                _, masks, _, _ = layers.resolve(frame, 0, capture=False)
+                np.testing.assert_array_equal(masks[-1], 1.0 - self.person)
+            detect.assert_called_once_with(room.frame, room.person)
+            scene.calibration = SimpleNamespace(frame=frame, person=scene.person)
+            for _ in range(2):
+                _, masks, _, _ = layers.resolve(frame, 0, capture=False)
+                self.assertEqual(len(masks), 1)
+            self.assertEqual(detect.call_count, 2)
 
     def test_arrival_scan_stays_behind_opaque_foreground(self):
         with patch("photo_assistant.avatar.controller.time.monotonic", return_value=12.0):

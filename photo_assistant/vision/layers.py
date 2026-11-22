@@ -22,7 +22,7 @@ class SceneLayers:
         # Explicit scene masks take precedence over camera-inferred panels.
         self._infer_obstacle = infer_obstacle and not any(name != "person" for name in layers)
         self.names = (("obstacle",) if self._infer_obstacle else ()) + tuple(layers)
-        self._panel_cache: tuple[np.ndarray, np.ndarray | None] | None = None
+        self._panel_cache: tuple[object, np.ndarray | None] | None = None
         self._person_index = self.names.index("person") if "person" in self.names else None
         self._static: list[tuple[int, np.ndarray]] = []
         self.live: LiveMaskSource | None = None
@@ -49,7 +49,7 @@ class SceneLayers:
             masks = (*masks, *(obj.mask for obj in scene.objects))
         return frame, masks, person
 
-    def resolve(self, frame: np.ndarray, avatar_index: int, *, capture: bool):
+    def resolve(self, frame: np.ndarray, avatar_index: int, *, capture: bool, seat=None):
         """Return base masks and optional scene inference from the same camera frame."""
         scene = None
         masks = [mask for index, mask in self._static if index >= avatar_index]
@@ -80,15 +80,24 @@ class SceneLayers:
         ):
             raise RuntimeError("场景遮罩与相机画面尺寸不一致，请重新设置场景图层。")
         if self._infer_obstacle and avatar_index == 0 and (scene is None or not scene.objects):
-            # Preview, API and shutter share a snapshot when the camera has not
-            # advanced. Only immutable frames can safely reuse a detected mask.
+            # A fixed camera measures the room on its calibration exposure. Attach
+            # the fallback panel to that same room, including an empty result.
+            calibration = scene.calibration if scene is not None else None
+            key = calibration if calibration is not None else frame
             cached = self._panel_cache
-            if cached is not None and cached[0] is frame:
+            if cached is not None and cached[0] is key:
                 obstacle = cached[1]
             else:
-                obstacle = panel_mask(frame, person)
-                if not frame.flags.writeable:
-                    self._panel_cache = frame, obstacle
+                if calibration is None:
+                    obstacle = panel_mask(frame, person)
+                else:
+                    obstacle = panel_mask(calibration.frame, calibration.person)
+                    if obstacle is not None:
+                        obstacle = obstacle * (1.0 - calibration.person)
+                if calibration is not None or not frame.flags.writeable:
+                    self._panel_cache = key, obstacle
             if obstacle is not None:
+                if seat is not None and scene is not None:
+                    obstacle = seat.occluding_panel(obstacle, scene)
                 masks.append(obstacle)
         return frame, tuple(masks), person, scene

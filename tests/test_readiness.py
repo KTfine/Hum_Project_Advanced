@@ -15,7 +15,7 @@ class CoPhotoReadinessTests(unittest.TestCase):
         for placement in (None, {"avatar_visible": False}, {**self.standing, "avatar_visible": False},
                           {**self.standing, "pose_settled": False}):
             self.assertIsNone(self.ready.observe(placement))
-        self.assertTrue(self.ready.observe(self.standing))
+        self.assertEqual(self.ready.observe(self.standing), "entry")
         for placement in (self.standing, None, {"avatar_visible": False}, self.standing, self.seated):
             self.assertIsNone(self.ready.observe(placement))
 
@@ -27,7 +27,7 @@ class CoPhotoReadinessTests(unittest.TestCase):
         self.assertIsNone(self.ready.observe(self.seated))
         self.ready.finish_turn()
         self.assertIsNone(self.ready.observe({**self.seated, "pose_settled": False}))
-        self.assertTrue(self.ready.observe(self.seated))
+        self.assertEqual(self.ready.observe(self.seated), "action")
         self.assertIsNone(self.ready.observe(self.seated))
 
     def test_pose_change_and_return_to_earlier_pose_each_announce_once(self):
@@ -78,18 +78,6 @@ class CoPhotoReadinessTests(unittest.TestCase):
                 ready.begin_turn()
                 ready.finish_turn()
                 self.assertIsNone(ready.observe(self.seated))
-
-    def test_message_uses_rendered_pose_and_placement(self):
-        for source, pose, expected in (
-            ("并排站位", AvatarPose(hand="比耶"), "我在你旁边，剪刀手摆好了。"),
-            ("桌沿坐姿", AvatarPose(legs="坐着"), "我在桌沿坐好了。"),
-            ("桌沿坐姿", AvatarPose(), "我到位了，姿势也摆好了。"),
-            ("桌后站位", AvatarPose(), "我在桌子后面，姿势摆好了。"),
-            ("指定构图", AvatarPose(hand="比耶"), "我到位了，剪刀手摆好了。"),
-        ):
-            with self.subTest(source=source, pose=pose):
-                placement = dict(self.standing, placement_source=source, current_tachie=pose.command())
-                self.assertEqual(CoPhotoReadiness().observe(placement), expected)
 
     def test_last_action_result_survives_questions_but_not_incomplete_actions(self):
         self.assertIsNone(self.ready.last_action_succeeded)

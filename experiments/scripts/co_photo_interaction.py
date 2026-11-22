@@ -46,7 +46,7 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
     frames = {p.name: read_frame(p, crop) for p in ((left,) if portrait_entry else (left, right))}
     camera = ReplayCamera(frames[left.name])
     h, w = camera.frame.shape[:2]
-    args = client.parse_args(["--no-preview"], default_catalog=WHITE_DRAGON_CATALOG)
+    args = client.parse_args(["--no-preview", "--moving-camera"], default_catalog=WHITE_DRAGON_CATALOG)
     worker = PersonOcclusion(SceneSegmenter, max_frame_age=120)
     canvas = client.CanvasSource(args.sprite_catalog, w, h, args.jpeg_quality, threading.Event(), preview=False,
                                  scene_layers={"person": worker}, infer_obstacle=True, project_scene=True)
@@ -58,7 +58,7 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
                   dimensions=[w, h], crop_pixels=crop, prompts={}, turns=[])
     manifest = out / "manifest.json"
 
-    async def open_view(handoff=(), pending=None):
+    async def open_view(handoff=()):
         nonlocal session
         mode, revision = modes.snapshot()
         showing = mode == "co-photo"
@@ -66,8 +66,7 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
         system = client.build_control_prompt(canvas, args, mode=mode, entrance=entrance)
         record["prompts"][mode] = hashlib.sha256(system.encode()).hexdigest()
         (out / (mode + "-system.txt")).write_text(system, encoding="utf-8")
-        session = await direct.open_session(system, managed_observations=True, observe_on_start=showing,
-                                            handoff_messages=handoff, pending_observation=pending)
+        session = await direct.open_session(system, handoff_messages=handoff)
         modes.mark_loaded(mode, revision)
         canvas.configure_view(camera, show_character=showing, entrance=entrance)
         if showing:
@@ -85,12 +84,11 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
         stop = threading.Event()
         log = TurnLog(stop)
         row = dict(stage=stage, user=text, source=source.name, mode=modes.mode, before=before,
-                   pending_before=session.pending_observation, events=log.rows)
+                   events=log.rows)
         record["turns"].append(row)
         write_json(manifest, record)
-        previous_id = session._response_id
-        session.submit_frame(jpeg, text, placement=before)
-        if session._response_id != previous_id:
+        if text is not None:
+            session.submit_frame(jpeg, text, placement=before)
             shutter = client.PhotoCapture(camera, out / "photos", character_canvas=canvas if showing else None)
             try:
                 transition = await asyncio.wait_for(client.receive_realtime_outputs(
@@ -103,19 +101,18 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
             row["reply"] = done.get("text")
             row["metadata"] = done.get("metadata")
             if transition:
-                history, pending = session.handoff_messages(), session.pending_observation
+                history = session.handoff_messages()
                 await session.close()
-                await open_view(history, pending)
+                await open_view(history)
                 client.dispatch_model_commands(transition[1], canvas, speech, log, mode_selection=modes,
                                                photo_capture=client.PhotoCapture(camera, out / "photos", canvas))
-        row["pending_after"] = session.pending_observation
         row["png"] = stage + ".png"
-        _, row["after"] = canvas.jpeg_with_placement(camera.frame, include_character=modes.mode == "co-photo")
+        _, row["after"] = canvas.frame_with_placement(camera.frame, include_character=modes.mode == "co-photo")
         row["state"] = asdict(canvas.controller.state_at())
         shot = canvas.render_capture_frame(camera.frame) if modes.mode == "co-photo" else camera.frame
         save_frame(out / row["png"], shot)
         write_json(manifest, record)
-        print(stage, row.get("reply") or "(no response scheduled)", flush=True)
+        print(stage, row.get("reply", "(camera frame only)"), flush=True)
 
     try:
         canvas.start()
@@ -129,7 +126,7 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
             await turn("portrait-shutter", "保持刚入镜的位置，从我身后露着脸，帮我们拍一张。", left)
             return
         if standing_pair:
-            await turn("wait-move", None, right)
+            await turn("subject-moved", None, right)
             await turn("follow", "跟过来。", right)
             await turn("standing-shutter", "站在我旁边，一起看镜头，现在帮我们拍一张两个人都入镜的全身合照。", right)
             return
@@ -139,10 +136,10 @@ async def replay(left, right, out, *, portrait_entry=False, standing_pair=False,
             await turn("table-shutter", "保持现在的位置，拍一张。", left)
             return
         await turn("behind", "站到我身后一点，从我的肩膀旁边露出脸，让我能挡住你一部分。先别拍。", left)
-        await turn("wait-move", None, right)
+        await turn("subject-moved", None, right)
         await turn("follow", "我换到另一边了，跟过来，站到我身边。", right)
-        await turn("seat", "你坐下来吧。", right)
-        await turn("seat-table", "我指的是靠镜头的白桌，坐在它的前沿，腿自然垂下来。", right)
+        await turn("seat", "找一个离镜头最远、能坐的地方坐下吧。", right)
+        await turn("seat-table", "现在坐到靠镜头的那张白桌前沿，腿自然垂下来。", right)
         await turn("destination", "现在站起来，去画面左边靠书柜的空地，面向镜头，给我右边留点空间。", right)
         await turn("pair", "最后还是过来和我并排站，咱俩都要入镜。先别拍。", right)
         await turn("shutter", "就这样，我们一起看镜头，拍一张合照吧。", right)
@@ -165,7 +162,8 @@ if __name__ == "__main__":
     profile = parser.add_mutually_exclusive_group()
     profile.add_argument("--portrait-entry", action="store_true", help="Replay a digital crop of the left exposure")
     profile.add_argument("--standing-pair", action="store_true", help="Follow and take a full-length photo in a fresh session")
-    profile.add_argument("--table-choice", action="store_true", help="Sit on far and near tables, then take a seated photo")
+    profile.add_argument("--table-choice", action="store_true",
+                         help="Use the positions of two named tables in the scene, then take a seated photo")
     args = parser.parse_args()
     prefix = ("portrait" if args.portrait_entry else "standing" if args.standing_pair
               else "tables" if args.table_choice else "co-photo")

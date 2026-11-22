@@ -4,12 +4,12 @@ import io
 import os
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import numpy as np
 
 import photo_assistant.client as client
-from photo_assistant.avatar.pose import DEFAULT_SPRITE_CATALOG, AvatarPose, load_pose_catalog
+from photo_assistant.avatar.pose import WHITE_DRAGON_CATALOG, AvatarPose, load_pose_catalog
 from photo_assistant.protocol import Command, StreamingCommandParser
 from tests.avatar_fixture import rendered_avatar
 
@@ -22,6 +22,8 @@ class CameraSelectionTests(unittest.TestCase):
             disabled = client.parse_args(["--no-camera"])
 
         self.assertFalse(defaults.no_camera)
+        self.assertFalse(defaults.moving_camera)
+        self.assertTrue(client.parse_args(["--moving-camera"]).moving_camera)
         self.assertIsNone(defaults.camera_device)  # permit camera_name lookup at startup
         self.assertEqual(client.DEFAULT_CAMERA_DEVICE, 701)
         self.assertTrue(disabled.no_camera)
@@ -85,7 +87,7 @@ class AvatarControllerTests(unittest.TestCase):
     def test_expression_preserves_all_geometry(self):
         controller = client.AvatarController(
             client.AvatarState(0.3, 0.8, 1.4, -12.0),
-            pose_catalog=load_pose_catalog(DEFAULT_SPRITE_CATALOG),
+            pose_catalog=load_pose_catalog(WHITE_DRAGON_CATALOG),
         )
         pose = AvatarPose(face="高冷表情")
         controller.apply_command(Command("tachie", vars(pose)), now=1.0)
@@ -205,36 +207,49 @@ class FakeSession:
 
 
 class RealtimeInputSenderTests(unittest.IsolatedAsyncioTestCase):
-    async def test_every_tick_sends_camera_with_avatar_at_its_scene_position(self):
+    async def test_latest_composition_is_encoded_only_when_requested(self):
         import cv2
         stop_event = threading.Event()
-        class Camera:
-            def latest_frame(self):
-                return np.zeros((180, 320, 3), dtype=np.uint8)
-
-        class RecordingSession:
-            def __init__(self):
-                self.sent = []
-
-            def submit_frame(self, jpeg, text):
-                self.sent.append(jpeg)
-                if len(self.sent) == 2:
-                    stop_event.set()
-
-        session = RecordingSession()
+        session = Mock()
+        camera = Mock()
+        first = np.full((180, 320, 3), 190, dtype=np.uint8)
+        last = np.zeros_like(first)
+        camera.latest_frame.side_effect = [first, last, None]
+        inputs = Mock()
+        inputs.peek.side_effect = [None, None, "看一下"]
+        inputs.acknowledge.side_effect = lambda _: stop_event.set()
         pixels = np.full((50, 100, 4), (20, 80, 180, 255), dtype=np.uint8)
         self.enterContext(rendered_avatar(pixels))
-        canvas = client.CanvasSource(DEFAULT_SPRITE_CATALOG, 320, 180, 90, stop_event, preview=False)
+        canvas = client.CanvasSource(WHITE_DRAGON_CATALOG, 320, 180, 90, stop_event, preview=False)
         self.addCleanup(canvas.close)
         canvas.start()
-        await client.send_realtime_inputs(session, canvas, Camera(), stop_event)
-
-        self.assertEqual(len(session.sent), 2)
-        jpeg = session.sent[1]
+        with (patch.object(cv2, "imencode", wraps=cv2.imencode) as encode,
+              patch.object(client.asyncio, "sleep", new_callable=AsyncMock)):
+            await client.send_realtime_inputs(session, canvas, camera, stop_event, text_input=inputs)
+        encode.assert_called_once()
+        idle1, idle2, submitted = session.submit_frame.call_args_list
+        self.assertEqual(idle1.args, (None, None))
+        self.assertEqual(idle2.args, (None, None))
+        jpeg, text = submitted.args
+        self.assertEqual(text, "看一下")
         frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         self.assertEqual(frame.shape, (180, 320, 3))
         np.testing.assert_allclose(frame[145, 160], (20, 80, 180), atol=4)
         self.assertLess(frame[:90].max(), 10)
+
+    async def test_missing_co_photo_camera_discards_pending_image_before_question(self):
+        stop_event = threading.Event()
+        session, canvas, camera, inputs = Mock(), Mock(), Mock(), Mock()
+        camera.latest_frame.side_effect = [object(), None, None]
+        canvas.compose_view.return_value = object(), {"avatar_visible": True}, object()
+        inputs.peek.side_effect = [None, None, "还看得到吗"]
+        inputs.acknowledge.side_effect = lambda _: stop_event.set()
+        with patch.object(client.asyncio, "sleep", new_callable=AsyncMock):
+            await client.send_realtime_inputs(session, canvas, camera, stop_event, text_input=inputs,
+                                              report_placement=True, readiness=client.CoPhotoReadiness())
+        canvas.encode_jpeg.assert_not_called()
+        self.assertEqual(session.submit_frame.call_args.args, (None, "还看得到吗"))
+        self.assertIs(session.submit_frame.call_args.kwargs["placement"]["camera_frame_available"], False)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,25 @@ from photo_assistant.vision.scene_objects import SceneObject
 
 
 class PairDepthTests(unittest.TestCase):
+    def test_cached_projection_tracks_exposure_position_and_person_order(self):
+        person = np.ones((32, 48), np.float32)
+        depth = np.full_like(person, .7)
+        cover = person * .75
+        obj = SceneObject("couch", .9, cover)
+        ground = GroundProjection(1, 0, .4)
+        scene = SceneAnalysis(person, (obj,), depth, ground, cover, [])
+        visible = scene.projected_foreground(.4, .6, depth_order_person=True)
+        self.assertIs(visible, scene.projected_foreground(.4, .6, depth_order_person=True))
+        np.testing.assert_array_equal(visible[0], cover)
+        np.testing.assert_array_equal(visible[1], person)
+        front = scene.projected_foreground(.4, .8, depth_order_person=True)
+        self.assertFalse(front[0].any() or front[1].any())
+        alongside = scene.projected_foreground(.4, .8, depth_order_person=False)
+        self.assertFalse(alongside[0].any())
+        np.testing.assert_array_equal(alongside[1], person)
+        new_scene = SceneAnalysis(person, (obj,), depth + .2, ground, cover, [])
+        np.testing.assert_array_equal(new_scene.projected_foreground(.4, .8, depth_order_person=False)[0], cover)
+
     def test_slot_uses_real_depth_and_keeps_manually_supplied_masks(self):
         person = np.zeros((200, 320), np.float32)
         person[25:47, 90:109] = 1

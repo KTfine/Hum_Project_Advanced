@@ -83,6 +83,7 @@ class PersonOcclusion:
 
     def _run(self) -> None:
         segmenter = None
+        model_generation = None
         try:
             while True:
                 with self._condition:
@@ -100,6 +101,11 @@ class PersonOcclusion:
                 try:
                     if segmenter is None:
                         segmenter = self._factory()
+                    elif generation != model_generation:
+                        reset = getattr(segmenter, "reset_scene", None)
+                        if reset is not None:
+                            reset()
+                    model_generation = generation
                     mask = segmenter.segment(frame)
                 except Exception as exc:
                     with self._condition:

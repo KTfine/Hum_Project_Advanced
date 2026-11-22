@@ -35,8 +35,10 @@ class StreamingCommandParserTests(unittest.TestCase):
         self.assertEqual(commands[1].params, SPRITE_PARAMS)
 
     def test_composition_tags_survive_streaming_and_precede_the_shutter(self):
-        stream = "<peek><sit><sit:table=near><sit:table=far><sit:y=0.42,x=0.6><brace><brace:x=.25><stand><follow><capture>"
-        expected = [("peek", {}), ("sit", {}), ("sit", {"table": "near"}), ("sit", {"table": "far"}),
+        stream = ("<peek><sit><sit:distance=near><sit:distance=far><sit:table=near><sit:table=far>"
+                  "<sit:y=0.42,x=0.6><brace><brace:x=.25><stand><follow><capture>")
+        expected = [("peek", {}), ("sit", {}), ("sit", {"distance": "near"}), ("sit", {"distance": "far"}),
+                    ("sit", {"distance": "near"}), ("sit", {"distance": "far"}),
                     ("sit", {"x": 0.6, "y": 0.42}), ("brace", {}), ("brace", {"x": 0.25}),
                     ("stand", {}), ("follow", {}), ("capture", {})]
         for plain in (False, True):
@@ -52,7 +54,8 @@ class StreamingCommandParserTests(unittest.TestCase):
     def test_malformed_scene_requests_do_not_move_the_avatar(self):
         malformed = ("<sit:>", "<sit:x=0.4>", "<sit:x=.4,y=-.01>", "<sit:x=nan,y=.2>",
                      "<sit:x=0.1,x=0.2,y=0.2>", "<sit:x=.1,y=.2,depth=far>",
-                     "<sit:table=first>", "<sit:x=.5,y=.6,table=near>", "<stand:>",
+                     "<sit:table=first>", "<sit:x=.5,y=.6,table=near>", "<sit:distance=alongside>",
+                     "<sit:distance=near,table=far>", "<sit:x=.5,y=.6,distance=near>", "<stand:>",
                      "<peek:side=left>", "<brace:>", "<brace:x=nan>", "<brace:x=1.02>",
                      "<brace:side=left>", "<brace:x=.2,y=.4>", "<sitting>", "<standing>")
         for tag in malformed:
@@ -102,12 +105,20 @@ class StreamingCommandParserTests(unittest.TestCase):
             for closer in ("</speak>", "</speak:>"):
                 parser = self.make_parser(allow_plain_speech=plain)
                 commands = []
-                for char in f"<speak:到了。{closer}<wait:feedback>":
+                for char in f"<speak:到了。{closer}<blank>":
                     commands.extend(parser.feed("r", char))
                 expected = [("speak", {"text": "到了。"})] if plain else []
-                expected.append(("wait", {"task": "feedback"}))
+                expected.append(("blank", {}))
                 self.assertEqual([(cmd.kind, cmd.params) for cmd in commands], expected)
                 self.assertEqual(parser.plain_speech_count, int(plain))
+
+    def test_retired_wait_tags_are_ignored_even_when_streamed(self):
+        for plain in (False, True):
+            parser = self.make_parser(allow_plain_speech=plain)
+            commands = []
+            for char in "<wait:feedback><wait:capture><speak:好了。>":
+                commands.extend(parser.feed("r", char))
+            self.assertEqual([(c.kind, c.params) for c in commands], [("speak", {"text": "好了。"})])
 
     def test_layer_slot_emits_on_close_and_in_order_with_shutter(self):
         tag = "<layer:to,index=2>"
@@ -198,7 +209,8 @@ class StreamingCommandParserTests(unittest.TestCase):
 
     def test_teleport_requires_absolute_destination_and_accepts_only_one_optional_scale(self):
         for fields in ("", "x=0.5", "y=0.5", "scale=1", "to,x=0,y=0", "dx=0,dy=0",
-                       "x=0,y=0,ms=0", "x=0,y=0,x=1", "x=0,y=0,scale=1,scale=2"):
+                       "x=0,y=0,ms=0", "x=0,y=0,x=1", "x=0,y=0,scale=1,scale=2",
+                       "x=0,y=0,depth=near", "x=0,y=0,depth=far", "x=0,y=0,depth=alongside"):
             with self.subTest(fields=fields):
                 cmds = self.make_parser(allow_plain_speech=True).feed(
                     "r", f"<teleport:{fields}><teleport:y=-2,scale=3,x=3>"
