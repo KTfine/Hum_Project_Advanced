@@ -41,7 +41,7 @@ class DirectSession:
     # The frontend can drain every delta before handing off to a new prompt.
     emits_response_done = True
 
-    def __init__(self, system_prompt, client, *, visual_interval=8.0, max_turns=20,
+    def __init__(self, system_prompt, client, *, visual_interval=2.0, max_turns=20,
                  observe_on_start=False, handoff_messages=(),
                  managed_observations=False, pending_observation=None):
         self.session_id = uuid.uuid4().hex

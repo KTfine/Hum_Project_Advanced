@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
 import re
@@ -17,6 +17,7 @@ MAX_POSITION = 3.0
 CHARACTER_ACTIONS = frozenset({"follow", "peek", "sit", "brace", "stand", "teleport", "tachie", "layer", "rotate"})
 _PREFIX_RE = re.compile(r"<(speak|teleport|tachie|rotate|layer|photo|mode|wait|sit|brace):"
                         r"|<(blank|(?:capture|follow|peek|sit|brace|stand)(?=>))")
+_POSSIBLE_MARKUP = re.compile(r"<(?=[a-zA-Z/!?]|$)")
 _STARTERS = (
     "<speak:",
     "<teleport:",
@@ -68,9 +69,17 @@ class StreamingCommandParser:
 
     Strict parsing is the default for callers that require model-authored tags.
     Plain speech never implies an avatar action.
+
+    An optional audio callback receives (text, final) in stream order. It can
+    play complete clauses while buffering the unfinished tail. (None, False)
+    drops that tail if an open tag is abandoned. Returned commands still
+    follow the normal protocol and contain complete tagged speech.
     """
 
-    def __init__(self, max_buffer: int = 4096, *, allow_plain_speech: bool = False) -> None:
+    def __init__(
+        self, max_buffer: int = 4096, *, allow_plain_speech: bool = False,
+        on_speech_delta: Callable[[str | None, bool], None] | None = None,
+    ) -> None:
         if max_buffer < 16:
             raise ValueError("max_buffer must be at least 16")
         self.max_buffer = max_buffer
@@ -79,11 +88,12 @@ class StreamingCommandParser:
         self._response_id: str | None = None
         self._buffer = ""
         self._discarding_tag = False
+        self._on_speech_delta = on_speech_delta
+        self._speech_cursor: int | None = None
 
     def feed(self, response_id: str | None, text: str) -> list[Command]:
         if response_id != self._response_id:
-            self._buffer = ""
-            self._discarding_tag = False
+            self.flush()
             self._response_id = response_id
         self._buffer += str(text)
         commands: list[Command] = []
@@ -142,12 +152,16 @@ class StreamingCommandParser:
                 # With real speech before the nested prefix, prefer resyncing so
                 # a missing speech delimiter cannot swallow a following action.
                 if kind != "speak" or prefix_text.strip():
+                    self._discard_open_speech()
                     self._buffer = self._buffer[nested.start() :]
                     continue
             if closing < 0:
                 if len(self._buffer) > self.max_buffer:
+                    self._discard_open_speech()
                     self._buffer = ""
                     self._discarding_tag = self.allow_plain_speech
+                elif kind == "speak":
+                    self._stream_speech_body(self._buffer[body_start:])
                 break
 
             closing_run_end = closing + 1
@@ -175,8 +189,14 @@ class StreamingCommandParser:
             # Some model replies mix the compact speech opener with an XML closer.
             if kind == "speak" and body.endswith(("</speak", "</speak:")):
                 if self.allow_plain_speech:
-                    commands.extend(self._plain_speech(body.rsplit("</speak", 1)[0].strip()))
+                    body = body.rsplit("</speak", 1)[0]
+                    self._stream_speech_body(body, final=True)
+                    commands.extend(self._plain_speech(body.strip(), notify=False))
+                else:
+                    self._discard_open_speech()
                 continue
+            if kind == "speak":
+                self._stream_speech_body(body, final=True)
             command = _parse_command(kind, body, parameterized=match.group(1) is not None)
             if command is not None:
                 commands.append(command)
@@ -185,16 +205,43 @@ class StreamingCommandParser:
 
     def flush(self, response_id: str | None = None) -> list[Command]:
         if response_id is None or response_id == self._response_id:
+            if self._speech_cursor is not None:
+                self._discard_open_speech()
+            elif self._on_speech_delta is not None:
+                self._on_speech_delta("", True)
             self._buffer = ""
             self._discarding_tag = False
             if response_id is not None:
                 self._response_id = response_id
         return []
 
-    def _plain_speech(self, text: str) -> list[Command]:
+    def _stream_speech_body(self, body: str, *, final: bool = False) -> None:
+        if self._on_speech_delta is None:
+            return
+        if self._speech_cursor is None:
+            # Confirm preceding untagged text before starting a tentative tag.
+            self._on_speech_delta("", True)
+            self._speech_cursor = 0
+        # Hold a possible nested tag or XML closer, including a lone '<'
+        # split from its name. Never send its parameters to the synthesizer.
+        markup = _POSSIBLE_MARKUP.search(body, self._speech_cursor)
+        end = markup.start() if markup is not None else len(body)
+        delta = body[self._speech_cursor:end]
+        self._speech_cursor = None if final else end
+        if delta or final:
+            self._on_speech_delta(delta, final)
+
+    def _discard_open_speech(self) -> None:
+        if self._speech_cursor is not None and self._on_speech_delta is not None:
+            self._on_speech_delta(None, False)
+        self._speech_cursor = None
+
+    def _plain_speech(self, text: str, *, notify: bool = True) -> list[Command]:
         # A prefix before a valid command may contain an unknown/broken tag.
         # Strip such spans instead of exposing their contents as speech.
         text = re.sub(r"<[^>]*(?:>|$)", "", text)
+        if self._on_speech_delta is not None and notify and text:
+            self._on_speech_delta(text, False)
         if not text.strip():
             return []
         self.plain_speech_count += 1

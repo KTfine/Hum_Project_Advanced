@@ -2,7 +2,7 @@
 
 小白龙是一个通过摄像头看画面、在终端里和你对话的拍照助手。客户端直接调用 DeepSeek API，可以指导你拍照，也可以让小白龙入镜合照。
 
-## 当前版本（2026-11-21）
+## 当前版本（2026-11-22）
 
 - **拍照指导。** 可以问“我的手往哪儿放”，也可以告诉她“别让我挪位置”。她会根据画面给建议。说“等我走到玻璃旁再提醒我，先别拍”，她会等你到位再回应。编辑角色性格文件并重启，即可调整两个模式里的说话风格。[角色性格.txt](角色性格.txt)
 - **双人合照。** 说“过来一起拍”可以邀请她入镜，问“咱俩怎么拍好看”可以一起商量构图。全身照默认并排站，半身照默认从身侧探头。你走开后，默认探身的小白龙会在原地站直。再说“跟过来”，她会按你当时的位置重新站位。也可以让她从肩后探头、原地露齿笑，或坐到近桌或远桌的桌沿。[肩后转正与跟随实测](experiments/records/2026-11-21-departure-prompt.md)
@@ -16,18 +16,25 @@
 ```json
 {
   "api_key": "",
+  "assemblyai_api_key": "",
   "camera_name": "2K USB Camera",
-  "microphone": false
+  "microphone": true,
+  "tts": true
 }
 ```
 
 没有配置文件或 `api_key` 为空时，客户端读取环境变量 `DEEPSEEK_API_KEY`。两者都未设置时，实时客户端才会在交互终端提示输入。
+
+麦克风听写和语音朗读默认开启。启动后按终端提示输入 **AssemblyAI API Key**，输入时隐藏，仅供本次运行使用。也可以提前设置环境变量 `ASSEMBLYAI_API_KEY` 或填写本机的 `assemblyai_api_key`。如果只用键盘和字幕，可加 `--no-microphone --no-tts`。[麦克风与密钥设置](docs/reference/client-cli.md#麦克风听写)
+
+小白龙按中英文逗号、句号等停顿分段朗读。收到“肩膀放松，”时就开始合成这半句，后面的指导可以继续生成。英文段使用 AssemblyAI，中文段使用 Edge 晓伊（`zh-CN-XiaoyiNeural`）。[语音播放设置](docs/reference/client-cli.md#小白龙的声音)
 
 从新检出的仓库启动时，在仓库目录运行以下命令，安装依赖并下载人体分割、物体分割和相对深度模型。
 
 ```powershell
 python -m venv .venv-client
 .\.venv-client\Scripts\python.exe -m pip install -r requirements-client.txt
+.\.venv-client\Scripts\python.exe -m pip install -r requirements-voice.txt
 .\.venv-client\Scripts\python.exe -m photo_assistant.vision.segmentation
 .\.venv-client\Scripts\python.exe -m photo_assistant.vision.scene_objects
 .\.venv-client\Scripts\python.exe realtime_av_test.py
@@ -37,7 +44,7 @@ python -m venv .venv-client
 
 在终端输入“我想拍一张显得有活力的照片”并按 Enter，模型会结合当前画面回复。想进入合照可输入“和我一起合照吧”，返回时输入“继续指导我摆姿势”。客户端收到模型生成的模式标签后切换提示词和预览。在预览窗口按 Q 或在终端按 Ctrl+C 退出。
 
-安装语音依赖和 Vosk 中文模型后，运行 `python realtime_av_test.py --microphone` 可开启普通话听写。看到 `[mic]` 就绪提示后，说“现在拍一张”并稍作停顿，助手会显示识别文字并自动提交。要让 ▶ 默认开启听写，将上面的 `microphone` 设为 `true`。[一次性安装与麦克风设置](docs/reference/client-cli.md#麦克风听写)
+看到 `[mic]` 就绪提示后，说“现在拍一张”并稍作停顿。AssemblyAI 判定你说完后，助手会显示转写并自动提交。若收不到声音，可用 `python -m sounddevice` 查看输入设备，启动时加 `--microphone-device 设备编号` 选择实际使用的麦克风。[麦克风设置](docs/reference/client-cli.md#麦克风听写)
 
 想拍半身合照，可以在合照模式输入“靠近镜头一点，和我拍张半身照”。角色可以传送到脚点位于下边框外的位置，让下半身自然出框。预览满意后，输入“现在帮我拍一张”并按 Enter。程序将照片保存为项目 `photos/` 目录下的 PNG。指导模式保存摄像头原图，合照模式将实景与角色一起保存。入场和换位光效仅在预览中显示。
 

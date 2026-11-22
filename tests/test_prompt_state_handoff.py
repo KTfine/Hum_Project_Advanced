@@ -248,7 +248,9 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         camera = MagicMock()
         with patch.object(client, 'CanvasSource', return_value=self.canvas), \
              patch.object(client, 'CameraSource', return_value=camera), \
+             patch.object(client, 'SpeechOutput'), \
              patch.object(client, 'read_api_key', return_value='test-key'), \
+             patch.object(client, 'read_assemblyai_api_key', return_value=''), \
              patch.object(client, 'run_realtime_sessions', new=AsyncMock(side_effect=RuntimeError('failed'))), \
              contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, 'failed'):

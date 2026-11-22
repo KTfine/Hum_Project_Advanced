@@ -1,138 +1,185 @@
-"""Exercise offline dictation with deterministic PCM input and no audio hardware."""
+"""Exercise AssemblyAI streaming turns with deterministic audio and WebSocket events."""
 
 import asyncio
 import json
 import os
 import sys
-import tempfile
 import threading
 import unittest
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
+
+from aiohttp import WSMessage, WSMsgType
 
 from photo_assistant import voice_input
 
 
+class FakeSocket:
+    def __init__(self):
+        self.incoming = asyncio.Queue()
+        self.blocks = asyncio.Queue()
+        self.controls = []
+        self.closed = False
+        self.event(type="Begin")
+
+    def event(self, **payload):
+        self.incoming.put_nowait(WSMessage(WSMsgType.TEXT, json.dumps(payload), ""))
+
+    async def receive(self):
+        return await self.incoming.get()
+
+    async def send_bytes(self, pcm):
+        self.blocks.put_nowait(pcm)
+
+    async def send_json(self, data):
+        self.controls.append(data)
+        self.event(type="Termination")
+
+
 class VoiceInputTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        model_dir = self.enterContext(tempfile.TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"HUM_VOSK_MODEL": model_dir}))
-        self.recognizer = Mock()
-        self.vosk = SimpleNamespace(
-            Model=Mock(), KaldiRecognizer=Mock(return_value=self.recognizer), SetLogLevel=Mock(),
-        )
-        self.device = SimpleNamespace(
-            query_devices=Mock(return_value={"default_samplerate": 48000.0}),
-            RawInputStream=Mock(),
-        )
-        self.enterContext(patch.dict(sys.modules, {"sounddevice": self.device, "vosk": self.vosk}))
         self.stop = threading.Event()
-        self.opened = threading.Event()
+        self.speaking = threading.Event()
         self.closed = threading.Event()
+        self.opened = asyncio.Event()
+        self.delivered = []
+        self.messages = []
+        self.hardware = SimpleNamespace(query_devices=Mock(return_value={
+            "name": "USB microphone", "default_samplerate": 48000,
+        }), RawInputStream=Mock(side_effect=self.open_input))
+        self.enterContext(patch.dict(sys.modules, {"sounddevice": self.hardware}))
+        self.socket = FakeSocket()
+        self.connect = self.enterContext(patch("aiohttp.ClientSession.ws_connect", side_effect=self.connect_ws))
 
-    def feed_pcm(self, *blocks):
-        @contextmanager
-        def stream(**options):
-            self.assertEqual(options["channels"], 1)
-            self.assertEqual(options["dtype"], "int16")
-            self.assertEqual(options["samplerate"], 48000)
-            try:
-                self.opened.set()
-                for block in blocks:
-                    options["callback"](block, len(block) // 2, None, None)
-                yield SimpleNamespace(active=True)
-            finally:
-                self.closed.set()
+    @asynccontextmanager
+    async def connect_ws(self, endpoint, **kwargs):
+        yield self.socket
 
-        self.device.RawInputStream.side_effect = stream
-
-    async def test_only_completed_nonempty_utterances_are_delivered_once(self):
-        blocks = [bytes([sample, 0]) for sample in range(4)]
-        self.feed_pcm(*blocks)
-        self.recognizer.AcceptWaveform.side_effect = [False, True, True, True]
-        self.recognizer.Result.side_effect = [
-            json.dumps({"text": text}) for text in ("现在 拍 一 张", "", "向 左 移动")
-        ]
-
-        delivered = []
-        event_loop_thread = threading.get_ident()
-
-        def receive(text):
-            self.assertEqual(threading.get_ident(), event_loop_thread)
-            delivered.append(text)
-            if len(delivered) == 2:
-                self.stop.set()
-
+    @contextmanager
+    def open_input(self, **kwargs):
+        self.capture = kwargs["callback"]
+        self.opened.set()
         try:
-            await asyncio.wait_for(voice_input.recognize_microphone(self.stop, receive, Mock()), 4)
+            yield SimpleNamespace(active=True)
         finally:
-            self.stop.set()
+            self.closed.set()
 
-        self.assertEqual(delivered, ["现在拍一张", "向左移动"])
-        self.assertEqual(self.recognizer.AcceptWaveform.call_args_list, [call(b) for b in blocks])
-        self.recognizer.FinalResult.assert_not_called()
+    async def start(self):
+        self.worker = asyncio.create_task(voice_input.recognize_microphone(
+            self.stop, self.delivered.append, self.messages.append, api_key="secret",
+            device=3, speaking=self.speaking,
+        ))
+        self.addAsyncCleanup(self.finish)
+        await asyncio.wait_for(self.opened.wait(), 2)
+
+    async def finish(self):
+        self.stop.set()
+        if not self.worker.cancelled():
+            await asyncio.wait_for(self.worker, 3)
+
+    async def wait_for_text(self, text):
+        async with asyncio.timeout(2):
+            while text not in self.delivered:
+                await asyncio.sleep(.005)
+
+    def turn(self, order, text, final=True):
+        self.socket.event(type="Turn", turn_order=order, transcript=text, end_of_turn=final)
+
+    async def test_activity_and_unique_completed_turns_reach_client(self):
+        await self.start()
+        self.socket.event(type="SpeechStarted", timestamp=100)
+        self.turn(0, "现在", False)
+        self.turn(0, "现在拍照")
+        self.turn(0, "现在拍照。")
+        self.turn(1, "   ")
+        self.turn(2, "Take a photo.")
+        await self.wait_for_text("Take a photo.")
+        await self.finish()
+        self.assertEqual(self.delivered, ["现在拍照", "Take a photo."])
+        self.assertTrue(any("检测到说话" in message for message in self.messages))
+        self.assertTrue(any("USB microphone" in message for message in self.messages))
         self.assertTrue(self.closed.is_set())
+        self.assertEqual(self.socket.controls, [{"type": "Terminate"}])
+        options = self.connect.call_args.kwargs
+        self.assertEqual(options["headers"], {"Authorization": "secret"})
+        self.assertEqual(options["params"], {
+            "sample_rate": 48000, "speech_model": "assemblyai-stt-3-7-realtime-agent", "mode": "balanced",
+        })
+        self.hardware.query_devices.assert_called_once_with(3, "input")
+        options = self.hardware.RawInputStream.call_args.kwargs
+        self.assertEqual((options["device"], options["blocksize"], options["channels"], options["dtype"]),
+                         (3, 4800, 1, "int16"))
 
-    async def test_input_overflow_skips_damaged_phrase_and_accepts_next_command(self):
-        first, stale, overflow, tail, next_command = [bytes([i, 0]) for i in range(5)]
-        self.feed_pcm(first, stale)
-        last_result = ""
+    async def test_playback_sends_silence_and_first_new_phrase_is_accepted(self):
+        await self.start()
+        pcm = bytes([17, 2]) * 4800
+        self.speaking.set()
+        self.capture(pcm, 4800, None, None)
+        self.speaking.clear()
+        self.capture(pcm, 4800, None, None)
+        self.assertEqual(await asyncio.wait_for(self.socket.blocks.get(), 1), bytes(len(pcm)))
+        self.assertEqual(await asyncio.wait_for(self.socket.blocks.get(), 1), pcm)
+        self.turn(0, "再拍一张")
+        await self.wait_for_text("再拍一张")
+        self.assertEqual(self.delivered, ["再拍一张"])
 
-        def recognize(block):
-            nonlocal last_result
-            if block == first:
-                # The device overruns while Vosk is still decoding this phrase.
-                capture = self.device.RawInputStream.call_args.kwargs["callback"]
-                capture(overflow, 1, None, SimpleNamespace(input_overflow=True))
-                capture(tail, 1, None, None)
-                capture(next_command, 1, None, None)
-                return False
-            last_result = "拍照" if block == tail else "向 左 移动"
-            return True
+    async def test_overflow_discards_damaged_utterance(self):
+        await self.start()
+        self.capture(b"", 4800, None, True)
+        self.capture(bytes(9600), 4800, None, None)
+        async with asyncio.timeout(1):
+            while not any("丢帧" in status for status in self.messages):
+                await asyncio.sleep(.005)
+        self.turn(0, "不完整的指令")
+        self.turn(1, "向左")
+        await self.wait_for_text("向左")
+        self.assertEqual(self.delivered, ["向左"])
 
-        self.recognizer.AcceptWaveform.side_effect = recognize
-        self.recognizer.Result.side_effect = lambda: json.dumps({"text": last_result})
-        delivered = []
-
-        def receive(text):
-            delivered.append(text)
-            if text == "向左移动":
-                self.stop.set()
-
-        try:
-            await asyncio.wait_for(voice_input.recognize_microphone(self.stop, receive, Mock()), 4)
-        finally:
-            self.stop.set()
-        self.assertEqual(delivered, ["向左移动"])
-        self.assertEqual(self.recognizer.AcceptWaveform.call_args_list, [call(first), call(tail), call(next_command)])
-        self.recognizer.Reset.assert_called_once()
-        self.device.RawInputStream.assert_called_once()
+    async def test_cancel_terminates_billable_session_and_closes_device(self):
+        await self.start()
+        self.worker.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await self.worker
         self.assertTrue(self.closed.is_set())
+        self.assertEqual(self.socket.controls, [{"type": "Terminate"}])
 
-    async def test_cancelling_while_waiting_for_audio_closes_stream(self):
-        self.feed_pcm()
-        on_text = Mock()
-        task = asyncio.create_task(voice_input.recognize_microphone(self.stop, on_text, Mock()))
-        try:
-            self.assertTrue(await asyncio.to_thread(self.opened.wait, 3))
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await asyncio.wait_for(task, 3)
-        finally:
-            self.stop.set()
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        self.assertTrue(self.closed.is_set())
-        on_text.assert_not_called()
+    async def test_connection_error_and_missing_key_are_reported(self):
+        self.socket.incoming = asyncio.Queue()
+        self.socket.incoming.put_nowait(WSMessage(WSMsgType.CLOSE, 1008, "Invalid key secret"))
+        await voice_input.recognize_microphone(self.stop, Mock(), self.messages.append, api_key="secret")
+        self.assertTrue(any("1008" in s and "secret" not in s for s in self.messages))
+        self.hardware.RawInputStream.assert_not_called()
+        with patch.dict(os.environ, {"ASSEMBLYAI_API_KEY": ""}):
+            await voice_input.recognize_microphone(self.stop, Mock(), self.messages.append)
+        self.assertIn("未配置", self.messages[-1])
+        self.connect.assert_called_once()
 
-    async def test_audio_device_error_reaches_status_without_stopping_client(self):
-        self.device.RawInputStream.side_effect = OSError("device disconnected")
-        messages = []
-        on_text = Mock()
-        await asyncio.wait_for(
-            voice_input.recognize_microphone(self.stop, on_text, messages.append), 3,
-        )
-        self.assertTrue(any("device disconnected" in message for message in messages), messages)
-        self.assertFalse(self.stop.is_set())
-        on_text.assert_not_called()
+    async def test_device_failure_still_terminates_socket(self):
+        self.hardware.RawInputStream.side_effect = OSError("device disconnected")
+        await voice_input.recognize_microphone(self.stop, Mock(), self.messages.append, api_key="test")
+        self.assertIn("device disconnected", self.messages[-1])
+        self.assertEqual(self.socket.controls, [{"type": "Terminate"}])
+
+    async def test_transient_close_reconnects_and_resets_turn_order(self):
+        await self.start()
+        self.turn(0, "第一句")
+        await self.wait_for_text("第一句")
+        original = self.socket
+        self.socket = FakeSocket()
+        original.incoming.put_nowait(WSMessage(WSMsgType.CLOSE, 3008, "session expired"))
+        self.turn(0, "第二句")
+        await self.wait_for_text("第二句")
+        self.assertEqual(self.delivered, ["第一句", "第二句"])
+        self.assertEqual(self.connect.call_count, 2)
+
+    async def test_zero_input_diagnoses_selected_microphone_once(self):
+        await self.start()
+        for _ in range(52):
+            self.capture(bytes(9600), 4800, None, None)
+            await asyncio.wait_for(self.socket.blocks.get(), 1)
+        self.assertEqual(sum("全零音频" in message for message in self.messages), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

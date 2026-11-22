@@ -1,5 +1,7 @@
 {
   "api_key": "",
+  "assemblyai_api_key": "",
   "camera_name": "",
-  "microphone": false
+  "microphone": true,
+  "tts": true
 }

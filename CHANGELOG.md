@@ -2,7 +2,23 @@
 
 时区 Asia/Shanghai。只维护新基线及之后的变更；此前实验和协议不再作为当前依据。旧提交仍可从 [Git 历史](docs/archive/README.md) 追溯。
 
-## 2026-11-22 — 普通话麦克风输入
+## 2026-11-22 — 自动观察间隔缩短至 2 秒
+
+有待办和可用画面时，客户端最快每 2 秒调用一次 DeepSeek 复查画面。上一轮尚未结束时继续等待。
+
+## 2026-11-22 — AssemblyAI 听写、分段朗读与 5 秒自动观察
+
+麦克风现在默认开启。AssemblyAI 实时检测讲话和回合结束，自动提交一条完整的中文或英文指令。启动时可隐藏输入密钥，并可指定输入设备。英文分句使用 AssemblyAI Audrey，中文分句继续用 Edge 晓伊。已有待观察任务时，相邻视觉请求的最短间隔改为 5 秒。[使用说明](docs/reference/client-cli.md#麦克风听写) · [验证记录](experiments/records/2026-11-22-assemblyai-voice.md)
+
+## 2026-11-22 — Edge TTS 中英文分段朗读（英文后续改用 AssemblyAI）
+
+中文台词使用晓伊，英文台词使用 Michelle。实时客户端在 `<speak>` 的内容抵达逗号等停顿处后即可提交该段，标签闭合时提交尾段。[使用说明](docs/reference/client-cli.md#小白龙的声音) · [真实播放验证](experiments/records/2026-11-22-edge-streaming.md)
+
+## 2026-11-22 — 小白龙使用 Speaker 28 朗读（已由 Edge TTS 替代）
+
+当时的指导与合照客户端使用 Kokoro v1.1-zh 的中文女声 `zf_044`。回复逐句排队播放，角色就位后的确认也会朗读。[当时的播放验证](experiments/records/2026-11-22-speaker-28.md)
+
+## 2026-11-22 — 普通话麦克风输入（后续改用 AssemblyAI）
 
 运行 `python realtime_av_test.py --microphone` 或给启动脚本加上 `-Microphone`，可使用 Vosk 在本机转写普通话。每句完成后，拍照助手会显示文字并提交到当前会话。已核对默认麦克风打开与释放，并用三段指令录音验证回放和提交。[使用说明](docs/reference/client-cli.md#麦克风听写) · [识别结果](experiments/records/2026-11-22-microphone.md)
 

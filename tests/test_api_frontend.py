@@ -52,6 +52,21 @@ class DirectApiStartupTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, "DEEPSEEK_API_KEY"):
             client.read_api_key()
 
+    def test_assemblyai_key_uses_its_own_setting_env_or_hidden_prompt(self):
+        with patch.dict(os.environ, {"ASSEMBLYAI_API_KEY": " env ", "DEEPSEEK_API_KEY": "different"}), \
+             patch.object(client.sys.stdin, "isatty", return_value=True), \
+             patch.object(client.getpass, "getpass", return_value=" prompt ") as prompt:
+            self.assertEqual(client.read_assemblyai_api_key({"assemblyai_api_key": " file "}), "file")
+            self.assertEqual(client.read_assemblyai_api_key({}), "env")
+            prompt.assert_not_called()
+            os.environ["ASSEMBLYAI_API_KEY"] = ""
+            self.assertEqual(client.read_assemblyai_api_key({"api_key": "different"}), "prompt")
+            prompt.assert_called_once()
+            self.assertEqual(os.environ["ASSEMBLYAI_API_KEY"], "")
+            self.assertFalse(self.settings.exists())
+            with patch.object(client.sys.stdin, "isatty", return_value=False):
+                self.assertEqual(client.read_assemblyai_api_key({}), "")
+
     def test_run_from_another_folder_reads_project_key_without_prompt(self):
         self.settings.write_text('{"api_key":"file-key"}', encoding="utf-8-sig")
         other = self.settings.parent / "other"
@@ -86,6 +101,7 @@ class DirectApiStartupTests(unittest.TestCase):
         for mode in client.MODES:
             prompt = client.build_control_prompt(canvas, client.parse_args([]), mode=mode)
             self.assertIn("文字输入", prompt)
+            self.assertIn("用户用英文时用英文回复", prompt)
             self.assertNotIn("麦克风", prompt)
             if mode == "co-photo":
                 example = next(line for line in prompt.splitlines() if line.startswith("- 切换立绘"))

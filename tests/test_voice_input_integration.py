@@ -15,7 +15,7 @@ class MicrophoneInputTests(unittest.IsolatedAsyncioTestCase):
         source.put("先向左一点")
         source._edit_key("好")
 
-        async def recognize(stop_event, on_text, on_status):
+        async def recognize(stop_event, on_text, on_status, **kwargs):
             self.assertIs(stop_event, stop)
             on_status("就绪")
             on_text(" ")
@@ -23,7 +23,7 @@ class MicrophoneInputTests(unittest.IsolatedAsyncioTestCase):
 
         output = io.StringIO()
         with patch.object(client, "recognize_microphone", recognize), contextlib.redirect_stdout(output):
-            await source.run_microphone(stop)
+            await source.run_microphone(stop, api_key="test")
             source._edit_key("\r")
 
         self.assertEqual(list(source.pending), ["先向左一点", "现在拍一张", "好"])
@@ -35,23 +35,25 @@ class MicrophoneInputTests(unittest.IsolatedAsyncioTestCase):
         output = io.StringIO()
         with patch.object(client, "recognize_microphone", side_effect=OSError("设备已断开")), \
              contextlib.redirect_stdout(output):
-            await source.run_microphone(threading.Event())
+            await source.run_microphone(threading.Event(), api_key="test")
             source._accept_text("现在拍照\n")
         self.assertIn("可继续打字", output.getvalue())
         self.assertEqual(source.peek(), "现在拍照")
 
     async def test_launcher_selects_microphone_from_settings_and_cli_and_cleans_up(self):
         for settings, switches, enabled in (
-            ({}, [], False),
+            ({}, [], True),
             ({"microphone": True}, [], True),
-            ({"microphone": False}, ["--microphone"], True),
+            ({"microphone": False}, ["--microphone", "--microphone-device", "4"], True),
             ({"microphone": True}, ["--no-microphone"], False),
         ):
             with self.subTest(settings=settings, switches=switches):
                 stop_seen = []
                 started = asyncio.Event()
 
-                async def recognize(stop_event, on_text, on_status):
+                async def recognize(stop_event, on_text, on_status, *, api_key, device, speaking):
+                    self.assertEqual(api_key, "test-assembly")
+                    self.assertEqual(device, 4 if "--microphone-device" in switches else None)
                     try:
                         on_text("现在拍一张")
                         started.set()
@@ -65,10 +67,11 @@ class MicrophoneInputTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(started.wait(), 1)
                         self.assertEqual(text_input.peek(), "现在拍一张")
 
-                args = client.parse_args(["--no-camera", "--no-preview", *switches])
+                args = client.parse_args(["--no-camera", "--no-preview", "--no-tts", *switches])
                 engine = AsyncMock(side_effect=recognize)
                 canvas = Mock(error=None)
                 with patch.object(client, "read_api_key", return_value="test"), \
+                     patch.object(client, "read_assemblyai_api_key", return_value="test-assembly") as get_speech_key, \
                      patch.object(client, "read_project_settings", return_value=settings), \
                      patch.object(client, "CanvasSource", return_value=canvas), \
                      patch.object(client, "recognize_microphone", engine), \
@@ -77,4 +80,5 @@ class MicrophoneInputTests(unittest.IsolatedAsyncioTestCase):
                      contextlib.redirect_stdout(io.StringIO()):
                     await client.run_probe(args)
                 self.assertEqual(engine.call_count, int(enabled))
+                self.assertEqual(get_speech_key.call_count, int(enabled))
                 self.assertEqual(stop_seen, [True] if enabled else [])

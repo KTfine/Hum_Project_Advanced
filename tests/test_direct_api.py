@@ -28,7 +28,7 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
         async def complete(messages, *, on_delta):
             messages_seen.append(messages)
             if len(messages_seen) == 1:
-                return SimpleNamespace(text="<speak:往左一点。>", metadata={})
+                return SimpleNamespace(text="<speak:往左一点。><wait:feedback>", metadata={})
             started.set()
             try:
                 await asyncio.Future()
@@ -37,16 +37,18 @@ class DirectApiTests(unittest.IsolatedAsyncioTestCase):
 
         provider = AsyncMock()
         provider.complete.side_effect = complete
-        session = DirectSession("guidance", provider)
+        session = DirectSession("guidance", provider, managed_observations=True)
         self.addAsyncCleanup(session.close)
         jpeg = b"\xff\xd8\xffX"
         session.submit_frame(jpeg)
-        session.submit_frame(jpeg, "指导我摆姿势")
+        with patch("photo_assistant.api.session.time", monotonic=lambda: 100.0):
+            session.submit_frame(jpeg, "指导我摆姿势")
         await read_until(session, "response.done")
-        session.submit_frame(jpeg)
+        with patch("photo_assistant.api.session.time", monotonic=lambda: 101.99):
+            session.submit_frame(jpeg)
+        await asyncio.sleep(0)
         self.assertEqual(len(messages_seen), 1)
-        # Advance the observation clock without waiting on real model latency.
-        with patch("photo_assistant.api.session.time", monotonic=lambda: float("inf")):
+        with patch("photo_assistant.api.session.time", monotonic=lambda: 102.0):
             session.submit_frame(jpeg)
         await asyncio.wait_for(started.wait(), 2)
         self.assertEqual([m["role"] for m in messages_seen[1]],

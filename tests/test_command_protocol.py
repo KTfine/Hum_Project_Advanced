@@ -241,6 +241,76 @@ class StreamingCommandParserTests(unittest.TestCase):
 
         self.assertEqual(parser.flush("r1"), [])
 
+    def test_voice_callback_streams_native_body_and_preserves_command_contract(self):
+        events = []
+        parser = self.make_parser(on_speech_delta=lambda text, final: events.append((text, final)))
+        self.assertEqual(parser.feed("r", "<sp"), [])
+        self.assertEqual(parser.feed("r", "eak:看镜头，"), [])
+        self.assertEqual([event for event in events if event[0]], [("看镜头，", False)])
+        commands = parser.feed("r", "放松><capture><speak:smile!>")
+        self.assertEqual([(c.kind, c.params) for c in commands], [
+            ("speak", {"text": "看镜头，放松"}), ("capture", {}), ("speak", {"text": "smile!"}),
+        ])
+        self.assertEqual([event for event in events if event[0]], [
+            ("看镜头，", False), ("放松", True), ("smile!", True),
+        ])
+
+    def test_audio_callback_keeps_order_and_plain_word_spaces_at_any_split(self):
+        stream = "Keep still.<speak:向左，抬头。><blank><speak:好了。></ignored> Nice."
+        reference = self.make_parser(allow_plain_speech=True)
+        target = "".join(cmd.params["text"] for cmd in reference.feed("r", stream) if cmd.kind == "speak")
+        for size in (1, 2, 3, 8, len(stream)):
+            with self.subTest(size=size):
+                events = []
+                parser = self.make_parser(allow_plain_speech=True,
+                                          on_speech_delta=lambda text, final: events.append(text))
+                for i in range(0, len(stream), size):
+                    parser.feed("r", stream[i:i + size])
+                parser.flush("r")
+                self.assertEqual("".join(text for text in events if text is not None), target)
+
+    def test_abandoned_native_tail_is_cancelled(self):
+        for reason in ("response change", "flush", "nested action", "overlong"):
+            with self.subTest(reason=reason):
+                events = []
+                parser = self.make_parser(max_buffer=32, allow_plain_speech=True,
+                                          on_speech_delta=lambda text, final: events.append((text, final)))
+                parser.feed("old", "<speak:请")
+                events.clear()
+                if reason == "response change":
+                    parser.feed("new", "<speak:你好>")
+                elif reason == "flush":
+                    parser.flush("other")
+                    self.assertEqual(events, [])
+                    parser.flush("old")
+                elif reason == "nested action":
+                    commands = parser.feed("old", "<teleport:x=.2,y=.3>")
+                    self.assertEqual([cmd.kind for cmd in commands], ["teleport"])
+                else:
+                    parser.feed("old", "x" * 40)
+                    parser.feed("old", "tail>")
+                self.assertEqual(events[0], (None, False))
+                self.assertFalse(any(text and any(word in text for word in ("teleport", "x=", "tail"))
+                                     for text, _ in events))
+
+    def test_voice_callback_never_reads_xml_closers_or_nested_command_parameters(self):
+        for source, expected in [
+            ("<speak:好了。</speak:><blank>", "好了。"),
+            ("<speak: <teleport:x=.2,y=.3>好。", " 好。"),
+            ("<speak:有一个 >><blank>", "有一个 >"),
+            ("<unknown:secret>好。", "好。"),
+        ]:
+            # Literal '>' is only unambiguous when received in a single run.
+            sizes = (len(source),) if ">>" in source else (1, 4, len(source))
+            for size in sizes:
+                with self.subTest(source=source, size=size):
+                    events = []
+                    parser = self.make_parser(allow_plain_speech=True,
+                                              on_speech_delta=lambda text, final: events.append(text))
+                    for i in range(0, len(source), size):
+                        parser.feed("r", source[i:i + size])
+                    self.assertEqual("".join(text for text in events if text is not None), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

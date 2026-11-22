@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -31,6 +32,7 @@ from .persona import add_persona_options, load_persona_option
 from .prompts import CO_PHOTO_COMMAND_PROMPT, LIVE_ENTRY_CONTEXT, PHOTO_GUIDANCE_PROMPT, character_name_for
 from .protocol import CHARACTER_ACTIONS, Command, StreamingCommandParser
 from .readiness import CoPhotoReadiness
+from .speech_output import SpeechOutput
 from .voice_input import recognize_microphone
 from .vision.beside import side_placement
 from .vision.camera import open_camera
@@ -119,7 +121,10 @@ class ConsoleTextInput:
         if self.pending and self.pending[0] == text:
             self.pending.popleft()
 
-    async def run_microphone(self, stop_event: threading.Event) -> None:
+    async def run_microphone(
+        self, stop_event: threading.Event, *, api_key: str, device: str | int | None = None,
+        speaking: threading.Event | None = None,
+    ) -> None:
         def on_text(text: str) -> None:
             text = text.strip()
             if text and not stop_event.is_set():
@@ -130,7 +135,7 @@ class ConsoleTextInput:
             self.terminal.line(f"[mic] {message}")
 
         try:
-            await recognize_microphone(stop_event, on_text, on_status)
+            await recognize_microphone(stop_event, on_text, on_status, api_key=api_key, device=device, speaking=speaking)
         except Exception as exc:
             on_status(f"麦克风识别中断，可继续打字。{exc}")
 
@@ -266,11 +271,19 @@ class ConsoleTextInput:
 
 
 class SpeechQueue:
-    """Thread-safe FIFO for the current text sink and future sequential TTS."""
+    """Keep transcript fragments ordered and send speech clauses to the player."""
 
-    def __init__(self) -> None:
+    # When an ASCII separator follows a digit, wait one character to distinguish
+    # a real pause from 1,200 / 2.8 / 10:30, even if the network splits there.
+    _pause = re.compile(
+        r'(?:[，、。！？；：!?;…\n]|(?<!\d)[,:]|(?<=\d)[,:](?=\D)|\.(?=\s))+[”’」』]*'
+    )
+
+    def __init__(self, output: SpeechOutput | None = None) -> None:
         self._items: deque[str] = deque()
         self._lock = threading.Lock()
+        self.output = output
+        self._unfinished = ""
 
     def enqueue(self, text: str) -> None:
         if text:
@@ -280,6 +293,25 @@ class SpeechQueue:
     def pop_next(self) -> str | None:
         with self._lock:
             return self._items.popleft() if self._items else None
+
+    def read_aloud(self, text: str | None = "", final: bool = False) -> None:
+        if self.output is None:
+            return
+        if text is None:
+            self._unfinished = ""
+            return
+        self._unfinished += text
+        start = 0
+        for boundary in self._pause.finditer(self._unfinished):
+            clause = self._unfinished[start:boundary.end()].strip()
+            if any(char.isalnum() for char in clause):
+                self.output.say(clause)
+            start = boundary.end()
+        self._unfinished = self._unfinished[start:]
+        if final:
+            if any(char.isalnum() for char in self._unfinished):
+                self.output.say(self._unfinished.strip())
+            self._unfinished = ""
 
 
 class ModeSelection:
@@ -1192,6 +1224,7 @@ async def send_realtime_inputs(
     text_input: ConsoleTextInput | None = None, report_placement: bool = False,
     observation_requires_camera: bool = False,
     readiness: CoPhotoReadiness | None = None,
+    speech_output: SpeechOutput | None = None,
     terminal: TerminalOutput | None = None,
 ) -> None:
     """Keep the current frame available and deliver each user input exactly once."""
@@ -1232,6 +1265,8 @@ async def send_realtime_inputs(
                     terminal.end_speech()
                     terminal.speech(message)
                     terminal.end_speech()
+                    if speech_output is not None:
+                        speech_output.say(message)
                     if event_log is not None:
                         event_log.record("speak", text=message, source="co_photo_ready")
             if placement is None:
@@ -1262,6 +1297,7 @@ def dispatch_model_commands(
     terminal: TerminalOutput | None = None,
     brace_missing: bool = False,
     readiness: CoPhotoReadiness | None = None,
+    speech_already_streamed: bool = False,
 ) -> bool:
     """Carry a failed wall placement across chunks of this response so its shutter can wait."""
     standalone = terminal is None
@@ -1271,6 +1307,8 @@ def dispatch_model_commands(
     def emit_speech():
         for text in iter(speech_queue.pop_next, None):
             terminal.speech(text)
+            if not speech_already_streamed:
+                speech_queue.read_aloud(text, final=True)
             if event_log is not None:
                 event_log.record("speak", text=text)
 
@@ -1367,7 +1405,10 @@ async def receive_realtime_outputs(
     """Consume the turn, returning any actions that need a newly selected view."""
     if terminal is None:
         terminal = TerminalOutput()
-    parser = StreamingCommandParser(allow_plain_speech=True)
+    parser = StreamingCommandParser(
+        allow_plain_speech=True,
+        on_speech_delta=speech_queue.read_aloud if speech_queue.output is not None else None,
+    )
     active_response_id = None
     interrupted_response_ids = set()
     wait_for_turn_end = mode_selection is not None and getattr(session, "emits_response_done", False)
@@ -1389,6 +1430,7 @@ async def receive_realtime_outputs(
             if interrupted_id == active_response_id:
                 if readiness is not None:
                     readiness.cancel_turn()
+                speech_queue.read_aloud(None)
                 parser.flush()
                 active_response_id = None
                 requested_mode = None
@@ -1407,6 +1449,8 @@ async def receive_realtime_outputs(
                 if readiness is not None and event.get("turn_source") != "observation":
                     readiness.begin_turn()
                 terminal.end_speech()
+                speech_queue.read_aloud(None)
+                parser.flush()
                 active_response_id = response_id
                 requested_mode = None
                 after_switch.clear()
@@ -1458,7 +1502,8 @@ async def receive_realtime_outputs(
                     immediate.append(command)
             brace_missing = dispatch_model_commands(
                 immediate, canvas, speech_queue, event_log, verbose=verbose, mode_selection=mode_selection,
-                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness)
+                photo_capture=photo_capture, terminal=terminal, brace_missing=brace_missing, readiness=readiness,
+                speech_already_streamed=True)
         elif kind == "done":
             if response_id is not None and response_id != active_response_id:
                 continue
@@ -1471,12 +1516,15 @@ async def receive_realtime_outputs(
                     return requested_mode, after_switch
                 # Multiple tags can resolve back to the already loaded mode.
                 dispatch_model_commands(after_switch, canvas, speech_queue, event_log,
-                                        verbose=verbose, photo_capture=photo_capture, terminal=terminal, readiness=readiness)
+                                        verbose=verbose, photo_capture=photo_capture, terminal=terminal, readiness=readiness,
+                                        speech_already_streamed=True)
                 requested_mode = None
                 after_switch.clear()
             if readiness is not None:
                 readiness.finish_turn()
         elif kind == "closed":
+            speech_queue.read_aloud(None)
+            parser.flush()
             terminal.line(f"[session] closed: {value}")
             stop_event.set()
             return
@@ -1499,7 +1547,7 @@ def build_control_prompt(
     return template.format(
         character_name=args.character_name,
         character_persona=args.character_persona,
-        response_language="中文",
+        response_language="默认使用中文。用户用英文时用英文回复，用户指明语言时按指定语言回复。",
         pose_catalog=canvas.avatar_frames.catalog.describe() if mode == "co-photo" else "",
         tachie_fields=canvas.avatar_frames.catalog.entry_pose.command_fields() if mode == "co-photo" else "",
         entry_context=LIVE_ENTRY_CONTEXT,
@@ -1572,7 +1620,7 @@ async def run_realtime_sessions(
                 if mode == target_mode:
                     dispatch_model_commands(commands, canvas, speech_queue, event_log,
                                             verbose=args.verbose, photo_capture=photo_capture, terminal=terminal,
-                                            readiness=readiness)
+                                            readiness=readiness, speech_already_streamed=True)
                     if readiness is not None:
                         readiness.finish_turn()
                 queued_for_view = None
@@ -1584,7 +1632,7 @@ async def run_realtime_sessions(
                 include_character=include_character,
                 text_input=text_input, report_placement=mode == "co-photo" and not args.prompt,
                 observation_requires_camera=not args.prompt,
-                terminal=terminal, readiness=readiness,
+                terminal=terminal, readiness=readiness, speech_output=speech_queue.output,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 session, stop_event, canvas, speech_queue, verbose=args.verbose,
@@ -1611,6 +1659,7 @@ async def run_realtime_sessions(
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             terminal.end_speech()
+            speech_queue.read_aloud(None)
             await session.close()
         if not switched:
             return
@@ -1619,18 +1668,30 @@ async def run_realtime_sessions(
         terminal.line("[session] switching prompt")
 
 
-def read_api_key() -> str:
-    key = configured_api_key()
-    if not key and sys.stdin.isatty():
+def prompt_hidden_key(prompt: str) -> str:
+    if sys.stdin.isatty():
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
             try:
-                key = getpass.getpass("DeepSeek API Key (hidden): ").strip()
+                return getpass.getpass(prompt).strip()
             except (EOFError, getpass.GetPassWarning):
                 pass
+    return ""
+
+
+def read_api_key() -> str:
+    key = configured_api_key() or prompt_hidden_key("DeepSeek API Key (hidden): ")
     if not key:
         raise RuntimeError("请在 settings.json 中填写 api_key，设置 DEEPSEEK_API_KEY，或在终端提示时输入密钥。")
     return key
+
+
+def read_assemblyai_api_key(settings: dict) -> str:
+    key = settings.get("assemblyai_api_key", "")
+    if not isinstance(key, str):
+        raise ValueError("settings.json 中的 assemblyai_api_key 必须是字符串。")
+    return (key.strip() or os.environ.get("ASSEMBLYAI_API_KEY", "").strip()
+            or prompt_hidden_key("AssemblyAI API Key（隐藏输入，直接回车跳过）："))
 
 
 async def run_probe(
@@ -1638,9 +1699,20 @@ async def run_probe(
 ) -> None:
     api_key = read_api_key()
     settings = read_project_settings()
-    microphone = args.microphone if args.microphone is not None else settings.get("microphone", False)
+    microphone = args.microphone if args.microphone is not None else settings.get("microphone", True)
     if not isinstance(microphone, bool):
         raise ValueError("settings.json 中的 microphone 必须为 true 或 false。")
+    tts = args.tts if args.tts is not None else settings.get("tts", True)
+    if not isinstance(tts, bool):
+        raise ValueError("settings.json 中的 tts 必须为 true 或 false。")
+    assembly_key = read_assemblyai_api_key(settings) if microphone or tts else ""
+    mic_device = args.microphone_device if args.microphone_device is not None else settings.get("microphone_device")
+    if mic_device is not None and (isinstance(mic_device, bool) or not isinstance(mic_device, (str, int))):
+        raise ValueError("settings.json 中的 microphone_device 需要填写输入设备编号或名称。")
+    if isinstance(mic_device, str):
+        mic_device = mic_device.strip() or None
+        if mic_device and mic_device.isdecimal():
+            mic_device = int(mic_device)
     stop_event = threading.Event()
     occlusion = None if args.no_camera else PersonOcclusion(SceneSegmenter)
     canvas = CanvasSource(
@@ -1665,10 +1737,18 @@ async def run_probe(
         index = DEFAULT_CAMERA_DEVICE if args.camera_device is None else args.camera_device
         camera = CameraSource(index, stop_event, device_name=name, person_occlusion=occlusion)
     canvas.configure_view(camera, show_character=False)
-    speech_queue = SpeechQueue()
     text_input = ConsoleTextInput()
+    loop = asyncio.get_running_loop()
+
+    def tts_status(message: str) -> None:
+        loop.call_soon_threadsafe(text_input.terminal.line, f"[tts] {message}")
+
+    speech_output = SpeechOutput(on_status=tts_status, api_key=assembly_key) if tts else None
+    speech_queue = SpeechQueue(speech_output)
     input_tasks = []
     try:
+        if speech_output is not None:
+            speech_output.start()
         if camera is not None:
             camera.start()
         canvas.start()
@@ -1687,8 +1767,15 @@ async def run_probe(
         print("[controls] press Q in the preview or Ctrl+C to stop", flush=True)
         print("[input] type a goal, correction, or mode request and press Enter", flush=True)
         input_tasks.append(asyncio.create_task(text_input.run(stop_event)))
-        if microphone:
-            input_tasks.append(asyncio.create_task(text_input.run_microphone(stop_event)))
+        if microphone and assembly_key:
+            speaking = speech_output.speaking if speech_output is not None else None
+            input_tasks.append(asyncio.create_task(text_input.run_microphone(
+                stop_event, api_key=assembly_key, device=mic_device, speaking=speaking,
+            )))
+        elif microphone:
+            text_input.terminal.line("[mic] 缺少 AssemblyAI Key，听写已关闭。重启时输入密钥，或设置 ASSEMBLYAI_API_KEY。")
+        else:
+            text_input.terminal.line("[mic] 麦克风已关闭。")
         await run_realtime_sessions(
             api_key, canvas, camera, speech_queue, stop_event, args,
             event_log=event_log, text_input=text_input,
@@ -1698,6 +1785,8 @@ async def run_probe(
         for task in input_tasks:
             task.cancel()
         await asyncio.gather(*input_tasks, return_exceptions=True)
+        if speech_output is not None:
+            speech_output.close()
         canvas.close()
         if camera is not None:
             camera.close()
@@ -1736,9 +1825,15 @@ def parse_args(argv=None, *, default_catalog: Path = DEFAULT_SPRITE_CATALOG) -> 
     )
     parser.add_argument("--no-preview", action="store_true", help="hide canvas preview")
     parser.add_argument(
-        "--microphone", action=argparse.BooleanOptionalAction, default=None,
-        help="use offline Mandarin speech recognition with Vosk alongside typed input (default: microphone in settings.json, or off)",
+        "--tts", action=argparse.BooleanOptionalAction, default=None,
+        help="speak English with AssemblyAI and Mandarin with Edge Xiaoyi (default: on)",
     )
+    parser.add_argument(
+        "--microphone", action=argparse.BooleanOptionalAction, default=None,
+        help="use AssemblyAI streaming microphone recognition alongside typed input (default: on)",
+    )
+    parser.add_argument("--microphone-device", metavar="ID_OR_NAME",
+                        help="sounddevice input device index or name (default: system input device)")
     parser.add_argument("--verbose", action="store_true", help="print API response metadata and blank commands")
     parser.add_argument(
         "--log-file",

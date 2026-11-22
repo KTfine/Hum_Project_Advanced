@@ -7,7 +7,9 @@
 | `--camera-device` | OpenCV 摄像头编号，选择顺序见下文 |
 | `--no-camera` | 关闭摄像头采集，指导模式使用空白帧 |
 | `--no-preview` | 隐藏预览窗口 |
-| `--microphone` / `--no-microphone` | 本次启动时开启或关闭 Vosk 普通话听写，优先于设置文件 |
+| `--microphone` / `--no-microphone` | 开启或关闭 AssemblyAI 实时听写，默认开启，命令行优先于设置文件 |
+| `--microphone-device` | 输入设备编号或可唯一匹配的名称，默认使用系统的输入设备 |
+| `--tts` / `--no-tts` | 开启或关闭分段朗读，默认开启，命令行优先于设置文件 |
 | `--sprite-catalog` | 指定带五部位标签的 JSON 立绘库。实时客户端默认使用 `models/avatars/white_dragon/catalog.json`。[立绘目录](../../models/avatars/README.md) |
 | `--canvas-width` / `--canvas-height` | 没有可用摄像头帧时的画布尺寸，默认 1280 × 720；有摄像头画面时沿用其分辨率 |
 | `--jpeg-quality` | 发给模型的 JPEG 质量，默认 80，范围 1–100 |
@@ -28,13 +30,21 @@
 
 在终端输入“现在拍一张”。模型返回 `<capture>` 后，客户端会将照片保存到脚本同目录的 `photos/` 文件夹。指导模式保存摄像头原图，合照模式会按快门时的构图叠加角色。两种模式都使用相机帧的尺寸保存 PNG。使用 `--no-camera` 或尚未取得相机帧时会跳过拍摄。
 
+## 小白龙的声音
+
+在项目目录用启动客户端的 Python 执行 `python -m pip install -r requirements-voice.txt` 即可安装语音依赖。客户端把英文台词分段发送给 AssemblyAI，以美式女声 Audrey（`aai-audrey`）朗读。AssemblyAI 的独立合成服务支持英语等六种语言，普通话仍使用 Edge 晓伊（`zh-CN-XiaoyiNeural`）。[AssemblyAI 音色与语言](https://www.assemblyai.com/docs/tts/voices) · [Edge TTS](https://github.com/rany2/edge-tts)
+
+例如，`<speak:肩膀放松，Now look at the camera.>` 在中文逗号处就开始合成第一段，结尾的英文按顺序朗读。整段没有停顿符时，`>` 会提交尾段。纯数字倒数沿用上一段音色。
+
+外放时暂停接收麦克风指令，播完自动恢复。语音服务不可用时仍可查看终端回复。在 `settings.json` 中设置 `"tts": false` 可默认静音，也可用 `python realtime_av_test.py --no-tts` 或 `.\scripts\start_client.ps1 -NoTts` 临时静音。
+
 ## 麦克风听写
 
-客户端通过 sounddevice 读取系统默认麦克风，用 Vosk 在本机把普通话转为文字。首次安装时，在 `Hum_Project` 目录使用运行客户端的 Python 执行 `python -m pip install -r requirements-voice.txt`。下载约 42 MB 的 `vosk-model-small-cn-0.22`，将解压出的同名目录放入 `models/`。模型路径应为 `models/vosk-model-small-cn-0.22/am/final.mdl`。[官方中文模型下载](https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip) · [Vosk 模型与许可证](https://alphacephei.com/vosk/models)
+正常启动 `python realtime_av_test.py` 或 `.\scripts\start_client.ps1` 就会启用麦克风。若本机配置中保留了 `"microphone": false`，可以改成 `true`，也可用 `--microphone` 或 PowerShell 的 `-Microphone` 开启本次听写。启用听写或朗读时，程序从环境变量 `ASSEMBLYAI_API_KEY` 或本机 `settings.json` 的 `assemblyai_api_key` 字段读取密钥。两处都为空时，在交互终端提示处输入密钥，输入内容隐藏，仅供本次运行使用。
 
-运行 `python realtime_av_test.py --microphone`，或在 Windows 上运行 `.\scripts\start_client.ps1 -Microphone`。看到 `[mic]` 就绪提示后，说“现在拍一张”或描述构图要求。句末短暂停顿，识别完成的文字会显示在终端，并和键盘输入走同一个拍照指令队列。麦克风音频在本机处理，助手将转写文字和当前画面按原有流程发送给 DeepSeek。若设备不可用，可继续打字，并检查系统的默认输入设备及麦克风权限。
+客户端通过 sounddevice 采集麦克风音频并实时发送给 AssemblyAI。看到 `[mic]` 就绪提示后，用普通话说“现在拍一张”，或直接用英语说“Take a photo”。服务检测语音活动和回合结束，客户端只将完整转写提交一次，与键盘输入共用队列。DeepSeek 收到的是转写文字和当前画面。[AssemblyAI 多语种听写](https://www.assemblyai.com/docs/streaming/multilingual-transcription) · [回合检测](https://www.assemblyai.com/docs/streaming/turn-detection)
 
-默认关闭听写。在 `settings.json` 中添加布尔字段 `"microphone": true` 可让 VS Code ▶ 及启动脚本自动开启。已在其他位置安装 Vosk 中文模型时，可将环境变量 `HUM_VOSK_MODEL` 指向该解压目录。
+如果说话后终端一直没有转写，先看 `[mic]` 显示的设备名，再用运行客户端的 Python 执行 `python -m sounddevice`，查看有输入通道的设备编号。比如外接麦克风编号为 3，就用 `python realtime_av_test.py --microphone-device 3`，或 `.\scripts\start_client.ps1 -MicrophoneDevice 3` 启动。可以用 `settings.json` 的 `microphone_device` 保存选择。还应检查 Windows「设置 → 隐私和安全性 → 麦克风」是否允许桌面应用访问，以及输入设备是否静音。只用键盘和字幕时可运行 `.\scripts\start_client.ps1 -NoMicrophone -NoTts`。
 
 ## 选择摄像头
 
