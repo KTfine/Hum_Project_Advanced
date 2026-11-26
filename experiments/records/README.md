@@ -8,6 +8,8 @@
 
 | 记录 | 版本与类型 | 实际结论 |
 |---|---|---|
+| [尖括号与 JSON 指令格式对照](2026-11-26-command-format-comparison.md) | 30 个冻结请求、60 次真实 DeepSeek 调用；全自动解析 | 双方正确的27对中尖括号输出 token 少38.13%，两种格式的完整语义准确率均为93.33%；不声称总计费 token 或解析率更优。 |
+| [DeepSeek 与专用模型的人体理解正式对照](2026-11-26-human-understanding-formal.md) | Penn Action 60 条、RAVDESS 56 条；全自动评分与模型缩档 | DeepSeek 完成 activity、pose、emotion 三项任务；activity 和 emotion 点估计达到专用模型，pose 在最小 YOLO11n 档仍落后。 |
 | [合照定时观察中的避让动作](2026-11-23-observation-movement.md) | 原始流式输出与统一执行器回归 | 移除观察专用动作限制后，原会话的 11 条移动指令全部到达指定脚点。 |
 | [沙发前后遮挡与落座复测](2026-11-23-sofa-occlusion-recheck.md) | 历史场景回放与离线回归 | 沙发后方遮住 20,523 个角色像素，前方为 0。沙发、长椅的四张坐姿图均与历史图像一致。 |
 | [对话期间每 2 秒看一次画面](2026-11-23-periodic-observation.md) | 运行行为变更，未执行测试 | 定时观察取代下方的画面变化检测。会话空闲时发送最新画面，静止画面也会发送。 |

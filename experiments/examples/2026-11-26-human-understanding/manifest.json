@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "selection_policy": "two lexicographically first correct/incorrect cases for classification; two highest/lowest non-overlapping PCK cases for pose",
+  "source_runs": {
+    "penn": "D:\\AI_Cache\\hum_project_evaluation\\runs\\20261126-penn-formal",
+    "ravdess": "D:\\AI_Cache\\hum_project_evaluation\\runs\\20261126-ravdess-formal"
+  },
+  "examples": [
+    {
+      "task": "activity",
+      "outcome": "success",
+      "sample_id": "0071",
+      "file": "activity-success-0071.jpg",
+      "detail": "truth=baseball_pitch | pred=baseball_pitch",
+      "selection": "automatic"
+    },
+    {
+      "task": "activity",
+      "outcome": "success",
+      "sample_id": "0085",
+      "file": "activity-success-0085.jpg",
+      "detail": "truth=baseball_pitch | pred=baseball_pitch",
+      "selection": "automatic"
+    },
+    {
+      "task": "activity",
+      "outcome": "failure",
+      "sample_id": "0969",
+      "file": "activity-failure-0969.jpg",
+      "detail": "truth=jump_rope | pred=jumping_jacks",
+      "selection": "automatic"
+    },
+    {
+      "task": "activity",
+      "outcome": "failure",
+      "sample_id": "1819",
+      "file": "activity-failure-1819.jpg",
+      "detail": "truth=squat | pred=clean_and_jerk",
+      "selection": "automatic"
+    },
+    {
+      "task": "pose",
+      "outcome": "success",
+      "sample_id": "1033",
+      "file": "pose-success-1033.jpg",
+      "detail": "PCK@0.10=0.788",
+      "selection": "automatic",
+      "overlay": "ground truth green; DeepSeek prediction magenta",
+      "display_frame_slot": 4,
+      "source_frame_index": 22
+    },
+    {
+      "task": "pose",
+      "outcome": "success",
+      "sample_id": "1121",
+      "file": "pose-success-1121.jpg",
+      "detail": "PCK@0.10=0.769",
+      "selection": "automatic",
+      "overlay": "ground truth green; DeepSeek prediction magenta",
+      "display_frame_slot": 4,
+      "source_frame_index": 16
+    },
+    {
+      "task": "pose",
+      "outcome": "failure",
+      "sample_id": "0321",
+      "file": "pose-failure-0321.jpg",
+      "detail": "PCK@0.10=0.000",
+      "selection": "automatic",
+      "overlay": "ground truth green; DeepSeek prediction magenta",
+      "display_frame_slot": 4,
+      "source_frame_index": 24
+    },
+    {
+      "task": "pose",
+      "outcome": "failure",
+      "sample_id": "1880",
+      "file": "pose-failure-1880.jpg",
+      "detail": "PCK@0.10=0.000",
+      "selection": "automatic",
+      "overlay": "ground truth green; DeepSeek prediction magenta",
+      "display_frame_slot": 4,
+      "source_frame_index": 49
+    },
+    {
+      "task": "emotion",
+      "outcome": "success",
+      "sample_id": "02-01-01-01-01-01-01",
+      "file": "emotion-success-02-01-01-01-01-01-01.jpg",
+      "detail": "truth=neutral | pred=neutral",
+      "selection": "automatic"
+    },
+    {
+      "task": "emotion",
+      "outcome": "success",
+      "sample_id": "02-01-01-01-01-01-02",
+      "file": "emotion-success-02-01-01-01-01-01-02.jpg",
+      "detail": "truth=neutral | pred=neutral",
+      "selection": "automatic"
+    },
+    {
+      "task": "emotion",
+      "outcome": "failure",
+      "sample_id": "02-01-04-01-01-01-01",
+      "file": "emotion-failure-02-01-04-01-01-01-01.jpg",
+      "detail": "truth=sad | pred=neutral",
+      "selection": "automatic"
+    },
+    {
+      "task": "emotion",
+      "outcome": "failure",
+      "sample_id": "02-01-04-01-02-01-01",
+      "file": "emotion-failure-02-01-04-01-02-01-01.jpg",
+      "detail": "truth=sad | pred=neutral",
+      "selection": "automatic"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+﻿section,measure,format,value
+overall_tokens,Mean output,angle,15.9
+overall_tokens,Mean output,json,24.666666666666668
+overall_tokens,Median output,angle,11.0
+overall_tokens,Median output,json,21.0
+overall_tokens,Paired-correct mean,angle,14.666666666666666
+overall_tokens,Paired-correct mean,json,23.703703703703702
+category_tokens,Single,angle,4.0
+category_tokens,Single,json,11.0
+category_tokens,Parameterized,angle,20.166666666666668
+category_tokens,Parameterized,json,27.333333333333332
+category_tokens,Speech,angle,9.5
+category_tokens,Speech,json,17.833333333333332
+category_tokens,Character,angle,29.5
+category_tokens,Character,json,38.5
+category_tokens,Multi-command,angle,16.333333333333332
+category_tokens,Multi-command,json,28.666666666666668
+reliability,Strict parse,angle,0.9333333333333333
+reliability,Strict parse,json,1.0
+reliability,Exact semantics,angle,0.9333333333333333
+reliability,Exact semantics,json,0.9333333333333333

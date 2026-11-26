@@ -1,0 +1,8 @@
+# Install into the existing D-drive aiaa2205 environment. Keep its CUDA PyTorch.
+ultralytics>=8.3,<9
+transformers>=4.57,<5
+emotiefflib==1.1.1
+onnxruntime>=1.23,<2
+opencv-python>=5,<6
+scipy>=1.14,<2
+async-timeout>=4,<6

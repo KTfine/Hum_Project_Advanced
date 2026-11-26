@@ -1,0 +1,13 @@
+﻿task,metric,model,display_name,value
+Activity,Accuracy,deepseek-flash,DeepSeek,0.966666666667
+Activity,Accuracy,xclip-large-patch14,X-CLIP Large,0.783333333333
+Activity,Accuracy,xclip-base-patch32,X-CLIP Base,0.733333333333
+Pose,PCK@0.20,deepseek-flash,DeepSeek,0.601918465228
+Pose,PCK@0.20,yolo11x-pose,YOLO11x,0.689648281375
+Pose,PCK@0.20,yolo11l-pose,YOLO11l,0.678457234213
+Pose,PCK@0.20,yolo11m-pose,YOLO11m,0.689248601119
+Pose,PCK@0.20,yolo11s-pose,YOLO11s,0.667066346922
+Pose,PCK@0.20,yolo11n-pose,YOLO11n,0.645883293365
+Emotion,Accuracy,deepseek-flash,DeepSeek,0.607142857143
+Emotion,Accuracy,hsemotion-enet-b2-8,HSEmotion B2,0.553571428571
+Emotion,Accuracy,hsemotion-enet-b0-8-afew,HSEmotion B0,0.553571428571

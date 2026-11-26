@@ -17,14 +17,12 @@ TODO.md
 upstream/
 **/logs/**
 !**/logs/.gitkeep
-**/models/**
 !**/models/.gitkeep
 !/models/avatars/
 !/models/avatars/white_dragon/
 !/models/avatars/white_dragon/*.json
 !/models/avatars/white_dragon/*.png
 !/models/avatars/README.md
-data/
 runtime_results/
 /experiments/runtime/
 /photos/
@@ -40,3 +38,5 @@ id_ed25519*
 *.tar.gz
 ENV_READY
 MODEL_READY
+
+TODO.md

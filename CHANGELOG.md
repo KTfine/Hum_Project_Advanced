@@ -2,6 +2,14 @@
 
 时区 Asia/Shanghai。只维护新基线及之后的变更；此前实验和协议不再作为当前依据。旧提交仍可从 [Git 历史](docs/archive/README.md) 追溯。
 
+## 2026-11-26 — 对照尖括号与 JSON 指令格式
+
+使用30个冻结请求完成60次真实 DeepSeek Flash 配对调用。双方都语义正确的27对中，尖括号平均节省38.13%的 completion tokens；两种格式的完整指令准确率均为93.33%。另按自动分数保留12张既有人体理解成功/失败案例联系图。[条件、限制与证据](experiments/records/2026-11-26-command-format-comparison.md)
+
+## 2026-11-26 — 完成三项人体理解正式对照
+
+新增 Penn Action 60 条 activity/pose 与 RAVDESS 56 条 emotion 的无训练、无人工判定评估。DeepSeek 与 X-CLIP、YOLO11-pose、HSEmotion 按预定模型阶梯完成真实推理，所有正式模型均为完整分母和零失败。activity 与 emotion 的 DeepSeek 点估计达到专用模型；pose 在 YOLO11n-pose 最小档仍落后。完整条件、分数、置信区间及证据哈希见[正式记录](experiments/records/2026-11-26-human-understanding-formal.md)。
+
 ## 2026-11-23 — 移除合照就位的终端提示
 
 角色入画或完成动作时，客户端将就位事件写入调试日志，终端不再显示“角色已就位”。
